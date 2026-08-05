@@ -1,0 +1,491 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+import '../models/receipt_template.dart';
+import '../models/field_roi.dart';
+import '../models/receipt_data.dart';
+import '../services/ocr_service.dart';
+
+/// Result of anchor matching on a captured receipt image.
+class AnchorMatchResult {
+  final bool matched;
+  final double scaleX;
+  final double scaleY;
+  final double offsetX;
+  final double offsetY;
+  final String? matchedAnchorA;
+  final String? matchedAnchorB;
+  final String? matchedAnchorC;
+  final double confidence;
+
+  AnchorMatchResult({
+    required this.matched,
+    this.scaleX = 1.0,
+    this.scaleY = 1.0,
+    this.offsetX = 0.0,
+    this.offsetY = 0.0,
+    this.matchedAnchorA,
+    this.matchedAnchorB,
+    this.matchedAnchorC,
+    this.confidence = 0.0,
+  });
+
+  ui.Rect mapRoi(ui.Rect templateRoi) {
+    return ui.Rect.fromLTRB(
+      templateRoi.left * scaleX + offsetX,
+      templateRoi.top * scaleY + offsetY,
+      templateRoi.right * scaleX + offsetX,
+      templateRoi.bottom * scaleY + offsetY,
+    );
+  }
+}
+
+/// Lightweight OCR block with position info.
+class OcrBlock {
+  final String text;
+  final double x, y, width, height;
+
+  OcrBlock({
+    required this.text,
+    required this.x,
+    required this.y,
+    required this.width,
+    required this.height,
+  });
+}
+
+/// Engine for matching receipt templates using OCR-based anchor detection.
+class MatchEngine {
+  static final MatchEngine _instance = MatchEngine._();
+  factory MatchEngine() => _instance;
+  MatchEngine._();
+
+  final OcrService _ocr = OcrService();
+
+  Future<List<OcrBlock>> _getBlocks(File imageFile) async {
+    final result = await _ocr.recognizeDetailed(imageFile);
+    if (result == null) return [];
+
+    final blocks = <OcrBlock>[];
+    for (final block in result.blocks) {
+      final lines = block.lines;
+      final text = lines.map((l) => l.text).join(' ').trim();
+      if (text.isEmpty) continue;
+
+      double minX = double.infinity, minY = double.infinity;
+      double maxX = 0, maxY = 0;
+      for (final line in lines) {
+        for (final element in line.elements) {
+          final rect = element.boundingBox;
+          if (rect != null) {
+            if (rect.left < minX) minX = rect.left.toDouble();
+            if (rect.top < minY) minY = rect.top.toDouble();
+            if (rect.right > maxX) maxX = rect.right.toDouble();
+            if (rect.bottom > maxY) maxY = rect.bottom.toDouble();
+          }
+        }
+      }
+
+      if (minX.isFinite && minY.isFinite) {
+        blocks.add(OcrBlock(
+          text: text,
+          x: minX,
+          y: minY,
+          width: maxX - minX,
+          height: maxY - minY,
+        ));
+      }
+    }
+    return blocks;
+  }
+
+  Future<AnchorMatchResult> matchTemplate(
+    ReceiptTemplate template,
+    File capturedFile,
+    double capturedWidth,
+    double capturedHeight,
+  ) async {
+    final blocks = await _getBlocks(capturedFile);
+    if (blocks.isEmpty) return AnchorMatchResult(matched: false);
+
+    final allText = blocks.map((b) => b.text).join('\n').toLowerCase();
+
+    String? matchedA;
+    double? ax, ay;
+    if (template.anchorA != null && template.anchorA!.expectedText.isNotEmpty) {
+      final expA = template.anchorA!.expectedText;
+      matchedA = _findBestMatch(expA.toLowerCase(), blocks, allText);
+      if (matchedA != null) {
+        final block = blocks.firstWhere(
+          (b) => b.text.toLowerCase().contains(expA.toLowerCase()),
+          orElse: () => blocks.first,
+        );
+        ax = block.x + block.width / 2;
+        ay = block.y + block.height / 2;
+      }
+    }
+
+    String? matchedB;
+    double? bx, by;
+    if (template.anchorB != null && template.anchorB!.expectedText.isNotEmpty) {
+      final expB = template.anchorB!.expectedText;
+      matchedB = _findBestMatch(expB.toLowerCase(), blocks, allText);
+      if (matchedB != null) {
+        final block = blocks.firstWhere(
+          (b) => b.text.toLowerCase().contains(expB.toLowerCase()),
+          orElse: () => blocks.first,
+        );
+        bx = block.x + block.width / 2;
+        by = block.y + block.height / 2;
+      }
+    }
+
+    String? matchedC;
+    if (template.anchorC != null && template.anchorC!.expectedText.isNotEmpty) {
+      final expC = template.anchorC!.expectedText;
+      matchedC = _findBestMatch(expC.toLowerCase(), blocks, allText);
+    }
+
+    double scaleX = 1.0, scaleY = 1.0, offsetX = 0.0, offsetY = 0.0;
+    final tW = template.masterWidth > 0 ? template.masterWidth : capturedWidth;
+    final tH = template.masterHeight > 0 ? template.masterHeight : capturedHeight;
+    scaleX = capturedWidth / tW;
+    scaleY = capturedHeight / tH;
+
+    if (matchedA != null && ax != null && ay != null && template.anchorA != null) {
+      final tA = template.anchorA!;
+      offsetX = ax - tA.roi.left * scaleX;
+      offsetY = ay - tA.roi.top * scaleY;
+    } else if (matchedB != null && bx != null && by != null && template.anchorB != null) {
+      final tB = template.anchorB!;
+      offsetX = bx - tB.roi.left * scaleX;
+      offsetY = by - tB.roi.top * scaleY;
+    }
+
+    int matchedCount = [matchedA, matchedB, matchedC].where((m) => m != null).length;
+    double confidence = matchedCount / 3.0;
+
+    return AnchorMatchResult(
+      matched: matchedA != null || matchedB != null,
+      scaleX: scaleX,
+      scaleY: scaleY,
+      offsetX: offsetX,
+      offsetY: offsetY,
+      matchedAnchorA: matchedA,
+      matchedAnchorB: matchedB,
+      matchedAnchorC: matchedC,
+      confidence: confidence,
+    );
+  }
+
+  String? _findBestMatch(String expected, List<OcrBlock> blocks, String allText) {
+    if (allText.contains(expected)) return expected;
+
+    final keywords = expected.split(RegExp(r'\s+')).where((w) => w.length >= 3).toList();
+    if (keywords.isNotEmpty) {
+      final found = keywords.where((k) => allText.contains(k)).toList();
+      if (found.length >= keywords.length * 0.6) {
+        found.sort((a, b) => b.length.compareTo(a.length));
+        return found.first;
+      }
+    }
+
+    for (final block in blocks) {
+      final bt = block.text.toLowerCase();
+      if (_levenshteinSimilarity(bt, expected) > 0.7) return block.text;
+      if (bt.startsWith(expected) || expected.startsWith(bt)) return block.text;
+    }
+
+    return null;
+  }
+
+  double _levenshteinSimilarity(String a, String b) {
+    if (a.isEmpty || b.isEmpty) return 0;
+    final dist = _levenshtein(a, b);
+    final maxLen = a.length > b.length ? a.length : b.length;
+    return 1.0 - dist / maxLen;
+  }
+
+  int _levenshtein(String a, String b) {
+    if (a.isEmpty) return b.length;
+    if (b.isEmpty) return a.length;
+    final matrix = List.generate(a.length + 1, (i) => List.filled(b.length + 1, 0));
+    for (int i = 0; i <= a.length; i++) matrix[i][0] = i;
+    for (int j = 0; j <= b.length; j++) matrix[0][j] = j;
+    for (int i = 1; i <= a.length; i++) {
+      for (int j = 1; j <= b.length; j++) {
+        final cost = a[i - 1] == b[j - 1] ? 0 : 1;
+        matrix[i][j] = [matrix[i - 1][j] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j - 1] + cost]
+            .reduce((a, b) => a < b ? a : b);
+      }
+    }
+    return matrix[a.length][b.length];
+  }
+
+  Future<ReceiptData> extractWithTemplate(
+    ReceiptTemplate template,
+    File capturedFile,
+    double capturedWidth,
+    double capturedHeight,
+    String filename,
+  ) async {
+    final result = await matchTemplate(template, capturedFile, capturedWidth, capturedHeight);
+    final data = ReceiptData(filename: filename);
+
+    if (!result.matched) {
+      data.description = 'Template not matched — low confidence';
+      final rawText = await _ocr.recognizeText(capturedFile);
+      _fillFromFullOcr(data, rawText);
+      return data;
+    }
+
+    final blocks = await _getBlocks(capturedFile);
+    final rawText = await _ocr.recognizeText(capturedFile);
+
+    // Extract configured field ROIs
+    for (final field in template.fields) {
+      final mappedRoi = result.mapRoi(field.roi);
+      final useDual = field.ocrEngine == 'both';
+      final croppedText = await _extractRoiText(capturedFile, mappedRoi, useDual: useDual);
+      _populateField(data, field.fieldName, croppedText.trim());
+    }
+
+    // Extract item table
+    if (template.itemTableConfig != null) {
+      double? anchorCY;
+      if (result.matchedAnchorC != null) {
+        final lower = result.matchedAnchorC!.toLowerCase();
+        for (final b in blocks) {
+          if (b.text.toLowerCase().contains(lower)) {
+            anchorCY = b.y;
+            break;
+          }
+        }
+      }
+      data.items = await _extractItemTable(
+        template.itemTableConfig!,
+        result,
+        capturedFile,
+        blocks,
+        anchorCY,
+      );
+    }
+
+    _fillFromFullOcr(data, rawText);
+
+    data.confidence = result.confidence;
+    data.isValidated = result.confidence >= 0.3;
+    return data;
+  }
+
+  Future<String> _extractRoiText(File imageFile, ui.Rect roi, {bool useDual = false}) async {
+    final clamped = ui.Rect.fromLTRB(
+      roi.left.clamp(0.0, double.infinity),
+      roi.top.clamp(0.0, double.infinity),
+      roi.right.clamp(0.0, double.infinity),
+      roi.bottom.clamp(0.0, double.infinity),
+    );
+    if (clamped.width < 5 || clamped.height < 5) return '';
+    try {
+      if (useDual) {
+        final dualResult = await _ocr.recognizeRoiDual(imageFile, clamped);
+        return dualResult.fusedText;
+      }
+      return await _ocr.recognizeRoi(imageFile, clamped);
+    } catch (e) {
+      return '';
+    }
+  }
+
+  void _populateField(ReceiptData data, String fieldName, String text) {
+    if (text.isEmpty) return;
+    switch (fieldName) {
+      case 'store_name':
+        if (data.supplier.isEmpty) data.supplier = text;
+        break;
+      case 'date':
+        final m = RegExp(r'(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})').firstMatch(text);
+        if (m != null) data.date = m.group(1)!;
+        break;
+      case 'time':
+        final m = RegExp(r'(\d{1,2}:\d{2}(:\d{2})?)').firstMatch(text);
+        if (m != null) data.time = m.group(1)!;
+        break;
+      case 'receipt_number':
+        if (data.number.isEmpty) data.number = text;
+        break;
+      case 'cashier':
+        data.cashier = text;
+        break;
+      case 'terminal_id':
+        data.terminalId = text;
+        break;
+      case 'currency':
+        data.currency = text.length <= 5 ? text : 'RM';
+        break;
+      case 'tax':
+        final v = _extractDecimal(text);
+        if (v > 0) data.tax = v;
+        break;
+      case 'subtotal':
+        final v = _extractDecimal(text);
+        if (v > 0) data.subtotal = v;
+        break;
+      case 'total':
+        final v = _extractDecimal(text);
+        if (v > 0) data.amount = v;
+        break;
+      case 'payment_method':
+        data.paymentMethod = text;
+        break;
+    }
+  }
+
+  Future<List<ItemRow>> _extractItemTable(
+    ItemTableConfig config,
+    AnchorMatchResult match,
+    File imageFile,
+    List<OcrBlock> blocks,
+    double? anchorCY,
+  ) async {
+    final items = <ItemRow>[];
+
+    final tableTop = match.mapRoi(config.tableRoi).top;
+    final tableBottom = anchorCY != null
+        ? anchorCY
+        : match.mapRoi(config.tableRoi).bottom;
+
+    final tableBlocks = blocks
+        .where((b) => b.y >= tableTop - 20 && b.y <= tableBottom + 20)
+        .toList();
+
+    tableBlocks.sort((a, b) {
+      final dy = a.y - b.y;
+      if (dy.abs() > 15) return dy.round();
+      return a.x.compareTo(b.x);
+    });
+
+    final rows = <List<OcrBlock>>[];
+    for (final block in tableBlocks) {
+      if (rows.isEmpty) {
+        rows.add([block]);
+      } else {
+        final last = rows.last.last;
+        if ((block.y - last.y).abs() <= 15) {
+          rows.last.add(block);
+        } else {
+          rows.add([block]);
+        }
+      }
+    }
+
+    final descLeft = match.mapRoi(config.descriptionColumn).left;
+    final priceLeft = match.mapRoi(config.unitPriceColumn).left;
+    final amountLeft = match.mapRoi(config.amountColumn).left;
+
+    for (final row in rows) {
+      row.sort((a, b) => a.x.compareTo(b.x));
+
+      String desc = '';
+      int? qty;
+      double? price;
+      double? amount;
+
+      for (final block in row) {
+        final cx = block.x + block.width / 2;
+        if (cx < descLeft) {
+          final n = _extractDecimal(block.text);
+          if (n > 0 && qty == null) qty = n.toInt();
+        } else if (cx < priceLeft) {
+          if (desc.isNotEmpty) desc += ' ';
+          desc += block.text;
+        } else if (cx < amountLeft) {
+          final v = _extractDecimal(block.text);
+          if (v > 0 && price == null) price = v;
+        } else {
+          final v = _extractDecimal(block.text);
+          if (v > 0 && amount == null) amount = v;
+        }
+      }
+
+      desc = desc.trim();
+      if (desc.isEmpty) continue;
+      final lower = desc.toLowerCase();
+      if (lower.contains('subtotal') || lower.contains('total') ||
+          lower.contains('tax') || lower.contains('gst') ||
+          lower.contains('service') || lower.contains('payment') ||
+          lower.contains('grand')) continue;
+
+      items.add(ItemRow(
+        quantity: qty ?? 1,
+        description: desc,
+        unitPrice: price ?? 0,
+        amount: amount ?? (price ?? 0) * (qty ?? 1),
+      ));
+    }
+
+    return items;
+  }
+
+  void _fillFromFullOcr(ReceiptData data, String rawText) {
+    final lines = rawText.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+
+    if (data.date.isEmpty) {
+      for (final line in lines) {
+        final m = RegExp(r'(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})').firstMatch(line);
+        if (m != null) { data.date = m.group(1)!; break; }
+      }
+    }
+
+    if (data.time.isEmpty) {
+      for (final line in lines) {
+        final m = RegExp(r'(\d{1,2}:\d{2})').firstMatch(line);
+        if (m != null) { data.time = m.group(1)!; break; }
+      }
+    }
+
+    if (data.number.isEmpty) {
+      for (final line in lines) {
+        final m = RegExp(r'(?:Receipt|Invoice|PV)[#\s:]*([\w/-]+)', caseSensitive: false).firstMatch(line);
+        if (m != null) { data.number = m.group(1)!.trim(); break; }
+      }
+    }
+
+    if (data.amount == 0) {
+      double best = 0;
+      for (final line in lines) {
+        final lower = line.toLowerCase();
+        if (lower.contains('total') || lower.contains('payable') || lower.contains('amount')) {
+          final v = _extractDecimal(line);
+          if (v > best) best = v;
+        }
+      }
+      if (best == 0) {
+        for (final line in lines) {
+          for (final m in RegExp(r'(\d+\.\d{2})').allMatches(line)) {
+            final v = double.tryParse(m.group(1)!) ?? 0;
+            if (v > 1.0 && v < 100000 && v > best) best = v;
+          }
+        }
+      }
+      data.amount = best;
+    }
+
+    if (data.supplier.isEmpty && lines.isNotEmpty) data.supplier = lines.first;
+
+    if (data.paymentMethod.isEmpty) {
+      final all = rawText.toLowerCase();
+      if (all.contains('cash')) data.paymentMethod = 'Cash';
+      else if (all.contains('visa')) data.paymentMethod = 'Visa';
+      else if (all.contains('mastercard')) data.paymentMethod = 'Mastercard';
+      else if (all.contains('tng') || all.contains('touch \'n go')) data.paymentMethod = 'TNG eWallet';
+      else if (all.contains('boost')) data.paymentMethod = 'Boost';
+      else if (all.contains('grabpay')) data.paymentMethod = 'GrabPay';
+    }
+  }
+
+  double _extractDecimal(String text) {
+    final m = RegExp(r'(?:rm\s*)?([\d,]+\.?\d{0,2})', caseSensitive: false).firstMatch(text);
+    if (m == null) return 0;
+    return double.tryParse(m.group(1)!.replaceAll(',', '')) ?? 0;
+  }
+}
