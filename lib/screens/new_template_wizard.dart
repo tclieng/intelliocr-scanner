@@ -1118,8 +1118,7 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
     final widgetRect = _imgToWidget(imgRect, displayedImg);
     final isSelected = _selectedBox == id;
 
-    // Extend the hit area 20px on every side so taps just outside the box
-    // still grab it. The colored visible box stays at the original size.
+    // 20px transparent grab margin — big hit area without changing visible box
     const double kGrabMargin = 20;
 
     return Positioned(
@@ -1127,86 +1126,83 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
       top: widgetRect.top - kGrabMargin,
       width: widgetRect.width + kGrabMargin * 2,
       height: widgetRect.height + kGrabMargin * 2,
-      // Listener for instant touch response (lower latency than GestureDetector)
-      child: Listener(
+      child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onPointerDown: (_) => _selectBox(id),
-        onPointerMove: (event) {
-          if (event.buttons & 1 != 0) {
-            // Button down = drag
-            _moveBox(id, event.delta, displayedImg);
-          }
-        },
+        onTap: () => _selectBox(id),
+        onPanStart: (_) => _selectBox(id),
+        onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            // Transparent grab ring (margin area) — keeps hit area big
-            // without changing the visible box.
+            // Transparent grab ring (keeps hit area large)
             Positioned.fill(
-              child: IgnorePointer(
-                child: Container(color: Colors.transparent),
-              ),
+              child: IgnorePointer(child: Container(color: Colors.transparent)),
             ),
-            // Visible box
+            // Visible box body — tap selects too
             Positioned(
               left: kGrabMargin,
               top: kGrabMargin,
               width: widgetRect.width,
               height: widgetRect.height,
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: isSelected ? color : color.withOpacity(0.7),
-                    width: isSelected ? 3 : 2,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _selectBox(id),
+                onPanStart: (_) => _selectBox(id),
+                onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                      color: isSelected ? color : color.withOpacity(0.7),
+                      width: isSelected ? 3 : 2,
+                    ),
+                    color: color.withOpacity(isSelected ? 0.20 : 0.15),
                   ),
-                  color: color.withOpacity(isSelected ? 0.20 : 0.15),
-                ),
-          child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    // Label
-                    Positioned(
-                      left: 4,
-                      top: 2,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: color,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          id.toUpperCase(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
+                  child: Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      // Label
+                      Positioned(
+                        left: 4,
+                        top: 2,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: color,
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            id.toUpperCase(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-
-                    // Resize handles (always visible for easier access)
-                    Positioned(
-                      left: -15,
-                      top: -15,
-                      child: _buildHandle(color, 'tl', id, displayedImg),
-                    ),
-                    Positioned(
-                      right: -15,
-                      top: -15,
-                      child: _buildHandle(color, 'tr', id, displayedImg),
-                    ),
-                    Positioned(
-                      left: -15,
-                      bottom: -15,
-                      child: _buildHandle(color, 'bl', id, displayedImg),
-                    ),
-                    Positioned(
-                      right: -15,
-                      bottom: -15,
-                      child: _buildHandle(color, 'br', id, displayedImg),
-                    ),
-                  ],
+                      // Resize handles
+                      Positioned(
+                        left: -15,
+                        top: -15,
+                        child: _buildHandle(color, 'tl', id, displayedImg),
+                      ),
+                      Positioned(
+                        right: -15,
+                        top: -15,
+                        child: _buildHandle(color, 'tr', id, displayedImg),
+                      ),
+                      Positioned(
+                        left: -15,
+                        bottom: -15,
+                        child: _buildHandle(color, 'bl', id, displayedImg),
+                      ),
+                      Positioned(
+                        right: -15,
+                        bottom: -15,
+                        child: _buildHandle(color, 'br', id, displayedImg),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1217,14 +1213,10 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
   }
 
   Widget _buildHandle(Color color, String corner, String boxId, Rect displayedImg) {
-    return Listener(
+    return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onPointerDown: (_) {},
-      onPointerMove: (event) {
-        if (event.buttons & 1 != 0) {
-          _resizeBox(boxId, corner, event.delta, displayedImg);
-        }
-      },
+      onPanStart: (_) => _selectBox(boxId),
+      onPanUpdate: (details) => _resizeBox(boxId, corner, details.delta, displayedImg),
       child: Container(
         width: 30,
         height: 30,
@@ -1510,12 +1502,12 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
                               (vertical[idx + 1].x - line.x).abs() * scaleX;
                           if (rightGap < gapPx) gapPx = rightGap;
                         }
-                        // Hit half-width: max 36 (=72px total), shrunk if
+                        // Hit half-width: max 40 (=80px total), shrunk if
                         // neighbors are close so zones never overlap. Minimum
-                        // 22 (=44px total) keeps small yellow boxes usable.
+                        // 26 (=52px total) keeps small yellow boxes usable.
                         final hitHalf = gapPx.isFinite
-                            ? (gapPx / 2 - 3).clamp(22.0, 36.0)
-                            : 36.0;
+                            ? (gapPx / 2 - 2).clamp(26.0, 40.0)
+                            : 40.0;
                         final xInYellow = line.x * scaleX;
                         final xAbsolute = yellowLeft + xInYellow;
                         return Positioned(
@@ -1523,14 +1515,13 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
                           top: yellowTop,
                           width: hitHalf * 2,
                           height: yellowH,
-                          child: Listener(
+                          child: GestureDetector(
                             behavior: HitTestBehavior.opaque,
-                            onPointerDown: (_) => _selectLine(line),
-                            onPointerMove: (event) {
-                              if (event.buttons & 1 != 0) {
-                                _moveLine(line, event.delta.dx / scaleX);
-                              }
-                            },
+                            onTap: () => _selectLine(line),
+                            onPanStart: (_) => _selectLine(line),
+                            onPanUpdate: (details) => _moveLine(line, details.delta.dx / scaleX),
+                            child: Center(
+                              child: Container(
                             child: Center(
                               child: Container(
                                 width: 8,
