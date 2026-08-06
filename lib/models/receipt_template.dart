@@ -19,8 +19,11 @@ class ReceiptTemplate {
   // Configured ROI fields
   List<FieldROI> fields;
 
-  // Item table configuration
+  // Item table configuration (legacy, deprecated)
   ItemTableConfig? itemTableConfig;
+
+  // YELLOW Box configuration (new, replaces itemTableConfig)
+  YellowBoxConfig? yellowBoxConfig;
 
   // Validation rules
   Map<String, String> validationRules;
@@ -41,6 +44,7 @@ class ReceiptTemplate {
     this.anchorC,
     List<FieldROI>? fields,
     this.itemTableConfig,
+    this.yellowBoxConfig,
     Map<String, String>? validationRules,
     this.masterWidth = 0,
     this.masterHeight = 0,
@@ -68,6 +72,7 @@ class ReceiptTemplate {
         'anchorC': anchorC?.toJson(),
         'fields': fields.map((f) => f.toJson()).toList(),
         'itemTableConfig': itemTableConfig?.toJson(),
+        'yellowBoxConfig': yellowBoxConfig?.toJson(),
         'validationRules': validationRules,
       };
 
@@ -101,6 +106,13 @@ class ReceiptTemplate {
             ? ItemTableConfig.fromJson(
                 json['itemTableConfig'] as Map<String, dynamic>)
             : null,
+        yellowBoxConfig: json['yellowBoxConfig'] != null
+            ? YellowBoxConfig.fromJson(
+                json['yellowBoxConfig'] as Map<String, dynamic>)
+            : (json['itemTableConfig'] != null
+                ? ItemTableConfig.fromJson(
+                    json['itemTableConfig'] as Map<String, dynamic>).toYellowBoxConfig()
+                : null), // Auto-migrate legacy itemTableConfig
         validationRules:
             (json['validationRules'] as Map<String, dynamic>? ?? {})
                 .map((k, v) => MapEntry(k, v as String)),

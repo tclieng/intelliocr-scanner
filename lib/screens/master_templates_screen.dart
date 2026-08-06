@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/template_service.dart';
 import '../models/receipt_template.dart';
 import 'template_view_screen.dart';
+import 'new_template_wizard.dart';
 
 /// Master Template Files screen - lists all created templates for viewing only.
 class MasterTemplatesScreen extends StatefulWidget {
@@ -66,6 +67,13 @@ class _MasterTemplatesScreenState extends State<MasterTemplatesScreen> {
           : _templates.isEmpty
               ? _buildEmptyState()
               : _buildTemplateList(),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _createNewTemplate,
+        backgroundColor: const Color(0xFFFF6B35),
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text('New Template'),
+      ),
     );
   }
 
@@ -90,10 +98,21 @@ class _MasterTemplatesScreenState extends State<MasterTemplatesScreen> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Create templates in the Template Editor',
+            'Create templates using the New Template wizard',
             style: TextStyle(
               fontSize: 14,
               color: Colors.grey[500],
+            ),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton.icon(
+            onPressed: _createNewTemplate,
+            icon: const Icon(Icons.add),
+            label: const Text('Create Template'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFFFF6B35),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
           ),
         ],
@@ -201,8 +220,8 @@ class _MasterTemplatesScreenState extends State<MasterTemplatesScreen> {
                         ),
                         const SizedBox(width: 6),
                         _buildStatusChip(
-                          'Table',
-                          template.itemTableConfig != null,
+                          'YELLOW',
+                          template.yellowBoxConfig != null,
                           const Color(0xFFFFC400),
                         ),
                       ],
@@ -242,5 +261,16 @@ class _MasterTemplatesScreenState extends State<MasterTemplatesScreen> {
         ),
       ),
     );
+  }
+
+  void _createNewTemplate() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const NewTemplateWizard()),
+    );
+    if (result == true) {
+      // Template was saved, refresh list
+      _loadTemplates();
+    }
   }
 }
