@@ -1189,25 +1189,26 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
                           ),
                         ),
                       ),
-                      // Resize handles
+                      // Resize handles (offset -28 to keep 36x36 visible centered on corner;
+                      // outer 56x56 hit area reaches further out for easy grabbing)
                       Positioned(
-                        left: -15,
-                        top: -15,
+                        left: -28,
+                        top: -28,
                         child: _buildHandle(color, 'tl', id, displayedImg),
                       ),
                       Positioned(
-                        right: -15,
-                        top: -15,
+                        right: -28,
+                        top: -28,
                         child: _buildHandle(color, 'tr', id, displayedImg),
                       ),
                       Positioned(
-                        left: -15,
-                        bottom: -15,
+                        left: -28,
+                        bottom: -28,
                         child: _buildHandle(color, 'bl', id, displayedImg),
                       ),
                       Positioned(
-                        right: -15,
-                        bottom: -15,
+                        right: -28,
+                        bottom: -28,
                         child: _buildHandle(color, 'br', id, displayedImg),
                       ),
                     ],
@@ -1222,32 +1223,40 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
   }
 
   Widget _buildHandle(Color color, String corner, String boxId, Rect displayedImg) {
+    // Outer 56x56 transparent hit area for easy grabbing, inner 36x36 visible circle
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onPanStart: (_) => _selectBox(boxId),
       onPanUpdate: (details) => _resizeBox(boxId, corner, details.delta, displayedImg),
       child: Container(
-        width: 30,
-        height: 30,
-        decoration: BoxDecoration(
-          color: color,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.35),
-              blurRadius: 3,
-              offset: const Offset(0, 1),
+        width: 56,
+        height: 56,
+        color: Colors.transparent,
+        child: Center(
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2.5),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.45),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
-          ],
-        ),
-        child: Icon(
-          corner == 'tl' ? Icons.north_west
-              : corner == 'tr' ? Icons.north_east
-              : corner == 'bl' ? Icons.south_west
-              : Icons.south_east,
-          color: Colors.white,
-          size: 14,
+            child: Icon(
+              corner == 'tl' ? Icons.north_west
+                  : corner == 'tr' ? Icons.north_east
+                  : corner == 'bl' ? Icons.south_west
+                  : Icons.south_east,
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
         ),
       ),
     );
@@ -1534,7 +1543,7 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
                             onPanUpdate: (details) => _moveLine(line, details.delta.dx / scaleX),
                             child: Center(
                               child: Container(
-                                width: 8,
+                                width: 3,
                                 height: yellowH,
                                 decoration: BoxDecoration(
                                   color: _selectedLine == line.id
