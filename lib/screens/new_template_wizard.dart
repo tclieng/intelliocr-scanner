@@ -226,9 +226,9 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     _verticalLines = [
       _ColumnLine(id: 'v0', x: 0, isVertical: true),              // Left edge
       _ColumnLine(id: 'v1', x: yw * 0.45, isVertical: true),     // After desc
-      _ColumnLine(id: 'v2', x: yw * 0.55, isVertical: true),      // After qty
-      _ColumnLine(id: 'v3', x: yw * 0.70, isVertical: true),     // After price
-      _ColumnLine(id: 'v4', x: yw * 0.80, isVertical: true),     // After disc
+      _ColumnLine(id: 'v2', x: yw * 0.60, isVertical: true),     // After qty
+      _ColumnLine(id: 'v3', x: yw * 0.75, isVertical: true),     // After price
+      _ColumnLine(id: 'v4', x: yw * 0.90, isVertical: true),     // After disc
       _ColumnLine(id: 'v5', x: yw, isVertical: true),            // Right edge
     ];
   }
@@ -1118,9 +1118,9 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
     final widgetRect = _imgToWidget(imgRect, displayedImg);
     final isSelected = _selectedBox == id;
 
-    // Extend the hit area 14px on every side so taps just outside the box
+    // Extend the hit area 20px on every side so taps just outside the box
     // still grab it. The colored visible box stays at the original size.
-    const double kGrabMargin = 14;
+    const double kGrabMargin = 20;
 
     return Positioned(
       left: widgetRect.left - kGrabMargin,
@@ -1187,23 +1187,23 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
 
                     // Resize handles (always visible for easier access)
                     Positioned(
-                      left: -22,
-                      top: -22,
+                      left: -15,
+                      top: -15,
                       child: _buildHandle(color, 'tl', id, displayedImg),
                     ),
                     Positioned(
-                      right: -22,
-                      top: -22,
+                      right: -15,
+                      top: -15,
                       child: _buildHandle(color, 'tr', id, displayedImg),
                     ),
                     Positioned(
-                      left: -22,
-                      bottom: -22,
+                      left: -15,
+                      bottom: -15,
                       child: _buildHandle(color, 'bl', id, displayedImg),
                     ),
                     Positioned(
-                      right: -22,
-                      bottom: -22,
+                      right: -15,
+                      bottom: -15,
                       child: _buildHandle(color, 'br', id, displayedImg),
                     ),
                   ],
@@ -1219,23 +1219,24 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
   Widget _buildHandle(Color color, String corner, String boxId, Rect displayedImg) {
     return Listener(
       behavior: HitTestBehavior.opaque,
+      onPointerDown: (_) {},
       onPointerMove: (event) {
         if (event.buttons & 1 != 0) {
           _resizeBox(boxId, corner, event.delta, displayedImg);
         }
       },
       child: Container(
-        width: 44,
-        height: 44,
+        width: 30,
+        height: 30,
         decoration: BoxDecoration(
           color: color,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 3),
+          border: Border.all(color: Colors.white, width: 2),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.3),
-              blurRadius: 4,
-              offset: const Offset(0, 2),
+              color: Colors.black.withOpacity(0.35),
+              blurRadius: 3,
+              offset: const Offset(0, 1),
             ),
           ],
         ),
@@ -1245,7 +1246,7 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
               : corner == 'bl' ? Icons.south_west
               : Icons.south_east,
           color: Colors.white,
-          size: 22,
+          size: 14,
         ),
       ),
     );
@@ -1435,8 +1436,8 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
             padding: const EdgeInsets.all(12),
             color: Colors.purple[50],
             child: const Text(
-              'Tap + button to add a vertical line (max 5).\n'
-              'Drag lines to move. Long press a line to delete.',
+              'Tap + button to add a vertical line (max 6).\n'
+              'Drag lines to move. Tap a line then 🗑 to delete.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13),
             ),
@@ -1509,12 +1510,12 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
                               (vertical[idx + 1].x - line.x).abs() * scaleX;
                           if (rightGap < gapPx) gapPx = rightGap;
                         }
-                        // Hit half-width: max 24 (=48px total), shrunk if
+                        // Hit half-width: max 36 (=72px total), shrunk if
                         // neighbors are close so zones never overlap. Minimum
-                        // 18 (=36px total) keeps small yellow boxes usable.
+                        // 22 (=44px total) keeps small yellow boxes usable.
                         final hitHalf = gapPx.isFinite
-                            ? (gapPx / 2 - 3).clamp(18.0, 24.0)
-                            : 24.0;
+                            ? (gapPx / 2 - 3).clamp(22.0, 36.0)
+                            : 36.0;
                         final xInYellow = line.x * scaleX;
                         final xAbsolute = yellowLeft + xInYellow;
                         return Positioned(
@@ -1552,14 +1553,8 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
                       });
                     })(),
 
-                    // Long press overlay for deleting the selected line
-                    Positioned.fill(
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.translucent,
-                        onLongPress: _deleteSelectedLine,
-                        child: const SizedBox.expand(),
-                      ),
-                    ),
+                    // (Removed: full-screen long-press overlay blocked pointer events.
+//   Delete is now handled by the trash button in the action bar.)
                   ],
                 );
               },
@@ -1574,15 +1569,25 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Lines: ${_lines.where((l) => l.isVertical).length} / 5',
+                  'Lines: ${_lines.where((l) => l.isVertical).length} / 6',
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                 ),
-                FloatingActionButton(
-                  onPressed: _lines.where((l) => l.isVertical).length >= 5
-                      ? null
-                      : _addLine,
-                  backgroundColor: Colors.purple,
-                  child: const Icon(Icons.add, color: Colors.white),
+                Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline, color: Colors.red),
+                      tooltip: 'Delete selected line',
+                      onPressed: _selectedLine == null ? null : _deleteSelectedLine,
+                    ),
+                    const SizedBox(width: 8),
+                    FloatingActionButton(
+                      onPressed: _lines.where((l) => l.isVertical).length >= 6
+                          ? null
+                          : _addLine,
+                      backgroundColor: Colors.purple,
+                      child: const Icon(Icons.add, color: Colors.white),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1603,7 +1608,7 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
   }
 
   void _addLine() {
-    if (_lines.where((l) => l.isVertical).length >= 5) return;
+    if (_lines.where((l) => l.isVertical).length >= 6) return;
     final newLine = _ColumnLine(
       id: 'v${DateTime.now().millisecondsSinceEpoch}',
       x: widget.yellowBox.width * 0.5,

@@ -51,7 +51,10 @@ class _TemplateViewScreenState extends State<TemplateViewScreen> {
     if (t.anchorA != null) _anchorARoi = t.anchorA!.roi;
     if (t.anchorB != null) _anchorBRoi = t.anchorB!.roi;
     if (t.anchorC != null) _anchorCRoi = t.anchorC!.roi;
-    if (t.itemTableConfig != null) {
+    // Prefer new yellowBoxConfig (current wizard); fall back to legacy itemTableConfig
+    if (t.yellowBoxConfig != null) {
+      _itemTableRoi = t.yellowBoxConfig!.roi;
+    } else if (t.itemTableConfig != null) {
       _itemTableRoi = t.itemTableConfig!.tableRoi;
     }
   }
@@ -132,7 +135,14 @@ class _TemplateViewScreenState extends State<TemplateViewScreen> {
         confidenceThreshold: t.anchorC!.confidenceThreshold,
       );
     }
-    if (t.itemTableConfig != null && _itemTableRoi != null) {
+    if (t.yellowBoxConfig != null && _itemTableRoi != null) {
+      t.yellowBoxConfig = YellowBoxConfig(
+        id: t.yellowBoxConfig!.id,
+        roi: _itemTableRoi!,
+        columns: t.yellowBoxConfig!.columns,
+        detectRowsBySubtotal: t.yellowBoxConfig!.detectRowsBySubtotal,
+      );
+    } else if (t.itemTableConfig != null && _itemTableRoi != null) {
       t.itemTableConfig!.tableRoi = _itemTableRoi!;
     }
 
@@ -321,11 +331,13 @@ class _TemplateViewScreenState extends State<TemplateViewScreen> {
                     imgH: imgH,
                     color: const Color(0xFF388E3C),
                   ),
-                // Item Table (Yellow) - draggable
+                // Item Table / YELLOW Box - draggable
                 if (_itemTableRoi != null)
                   _buildDraggableBox(
                     boxId: 'T',
-                    label: 'Item Table',
+                    label: widget.template.yellowBoxConfig != null
+                        ? 'Yellow Box'
+                        : 'Item Table',
                     imageRoi: _itemTableRoi!,
                     offsetX: offsetX,
                     offsetY: offsetY,
