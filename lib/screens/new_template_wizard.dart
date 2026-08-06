@@ -1522,8 +1522,6 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
                             onPanUpdate: (details) => _moveLine(line, details.delta.dx / scaleX),
                             child: Center(
                               child: Container(
-                            child: Center(
-                              child: Container(
                                 width: 8,
                                 height: yellowH,
                                 decoration: BoxDecoration(
