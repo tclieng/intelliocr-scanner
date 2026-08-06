@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import '../services/template_service.dart';
@@ -346,9 +347,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     
     // Save master image
     if (_masterImage != null) {
-      final templateDir = _templateService.templateDirectory;
-      final imagePath = '${templateDir.path}/${_template.id}_master.jpg';
-      await _masterImage!.copy(imagePath);
+      final imagePath = await _templateService.saveMasterImage(_template.id, _masterImage!);
       _template.masterImagePath = imagePath;
     }
 
