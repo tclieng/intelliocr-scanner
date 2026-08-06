@@ -121,11 +121,11 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     final w = _processedImage!.width.toDouble();
     final h = _processedImage!.height.toDouble();
     
-    // Initialize boxes in top-to-bottom sequence
-    _redBox = Rect.fromLTWH(w * 0.05, h * 0.02, w * 0.90, h * 0.08);    // Top
-    _blueBox = Rect.fromLTWH(w * 0.05, h * 0.12, w * 0.90, h * 0.06);   // Below red
-    _yellowBox = Rect.fromLTWH(w * 0.02, h * 0.20, w * 0.96, h * 0.50); // Middle
-    _greenBox = Rect.fromLTWH(w * 0.40, h * 0.75, w * 0.55, h * 0.08); // Bottom
+    // Initialize boxes in top-to-bottom sequence, kept within receipt bounds
+    _redBox = Rect.fromLTWH(w * 0.10, h * 0.04, w * 0.80, h * 0.07);   // Company name (top)
+    _blueBox = Rect.fromLTWH(w * 0.10, h * 0.14, w * 0.80, h * 0.05);  // Date (below red)
+    _yellowBox = Rect.fromLTWH(w * 0.08, h * 0.30, w * 0.84, h * 0.40); // Items (middle, ~30%-70%)
+    _greenBox = Rect.fromLTWH(w * 0.30, h * 0.82, w * 0.50, h * 0.07);  // Total (bottom)
   }
 
   void _rotateMaster(int degrees) {
@@ -562,24 +562,38 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
       builder: (context, constraints) {
         final imgW = _processedImage!.width.toDouble();
         final imgH = _processedImage!.height.toDouble();
-        final scale = constraints.maxWidth / imgW;
-        final scaledH = imgH * scale;
+        final maxW = constraints.maxWidth;
+        final maxH = constraints.maxHeight;
+        if (imgW == 0 || imgH == 0) return const SizedBox();
+
+        // BoxFit.contain math
+        final scaleW = maxW / imgW;
+        final scaleH = maxH / imgH;
+        final scale = scaleW < scaleH ? scaleW : scaleH;
+        final displayedW = imgW * scale;
+        final displayedH = imgH * scale;
+        final offsetX = (maxW - displayedW) / 2;
+        final offsetY = (maxH - displayedH) / 2;
 
         return Stack(
           children: [
-            // Image
-            Positioned.fill(
+            // Image (filled to displayed rect so coords match)
+            Positioned(
+              left: offsetX,
+              top: offsetY,
+              width: displayedW,
+              height: displayedH,
               child: Image.memory(
                 img.encodeJpg(_processedImage!, quality: 85),
-                fit: BoxFit.contain,
+                fit: BoxFit.fill,
               ),
             ),
-            
+
             // RED Box
             if (_redBox != Rect.zero)
               Positioned(
-                left: _redBox.left * scale,
-                top: _redBox.top * scale,
+                left: offsetX + _redBox.left * scale,
+                top: offsetY + _redBox.top * scale,
                 width: _redBox.width * scale,
                 height: _redBox.height * scale,
                 child: Container(
@@ -588,16 +602,16 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                     color: Colors.red.withOpacity(0.1),
                   ),
                   child: const Center(
-                    child: Text('🔴', style: TextStyle(fontSize: 20)),
+                    child: Text('RED', style: TextStyle(fontSize: 14, color: Colors.red, fontWeight: FontWeight.bold)),
                   ),
                 ),
               ),
-            
+
             // BLUE Box
             if (_blueBox != Rect.zero)
               Positioned(
-                left: _blueBox.left * scale,
-                top: _blueBox.top * scale,
+                left: offsetX + _blueBox.left * scale,
+                top: offsetY + _blueBox.top * scale,
                 width: _blueBox.width * scale,
                 height: _blueBox.height * scale,
                 child: Container(
@@ -606,16 +620,16 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                     color: Colors.blue.withOpacity(0.1),
                   ),
                   child: const Center(
-                    child: Text('🔵', style: TextStyle(fontSize: 20)),
+                    child: Text('BLUE', style: TextStyle(fontSize: 14, color: Colors.blue, fontWeight: FontWeight.bold)),
                   ),
                 ),
               ),
-            
+
             // YELLOW Box
             if (_yellowBox != Rect.zero)
               Positioned(
-                left: _yellowBox.left * scale,
-                top: _yellowBox.top * scale,
+                left: offsetX + _yellowBox.left * scale,
+                top: offsetY + _yellowBox.top * scale,
                 width: _yellowBox.width * scale,
                 height: _yellowBox.height * scale,
                 child: Container(
@@ -624,16 +638,16 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                     color: Colors.yellow.withOpacity(0.1),
                   ),
                   child: const Center(
-                    child: Text('🟡', style: TextStyle(fontSize: 20)),
+                    child: Text('YELLOW', style: TextStyle(fontSize: 14, color: Colors.brown, fontWeight: FontWeight.bold)),
                   ),
                 ),
               ),
-            
+
             // GREEN Box
             if (_greenBox != Rect.zero)
               Positioned(
-                left: _greenBox.left * scale,
-                top: _greenBox.top * scale,
+                left: offsetX + _greenBox.left * scale,
+                top: offsetY + _greenBox.top * scale,
                 width: _greenBox.width * scale,
                 height: _greenBox.height * scale,
                 child: Container(
@@ -642,7 +656,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                     color: Colors.green.withOpacity(0.1),
                   ),
                   child: const Center(
-                    child: Text('🟢', style: TextStyle(fontSize: 20)),
+                    child: Text('GREEN', style: TextStyle(fontSize: 14, color: Colors.green, fontWeight: FontWeight.bold)),
                   ),
                 ),
               ),
@@ -937,6 +951,59 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
     super.dispose();
   }
 
+  // Helper: get the actual displayed image rect given a Stack's box constraints
+  // Returns the rect (in widget coords) where the image is drawn (with BoxFit.contain)
+  Rect _getDisplayedImageRect(double maxW, double maxH) {
+    final imgW = widget.image.width.toDouble();
+    final imgH = widget.image.height.toDouble();
+    if (imgW == 0 || imgH == 0) return Rect.fromLTWH(0, 0, maxW, maxH);
+
+    final scaleW = maxW / imgW;
+    final scaleH = maxH / imgH;
+    final scale = scaleW < scaleH ? scaleW : scaleH;
+
+    final displayedW = imgW * scale;
+    final displayedH = imgH * scale;
+    final offsetX = (maxW - displayedW) / 2;
+    final offsetY = (maxH - displayedH) / 2;
+
+    return Rect.fromLTWH(offsetX, offsetY, displayedW, displayedH);
+  }
+
+  // Convert image pixel coords to widget coords using displayed image rect
+  Rect _imgToWidget(Rect imgRect, Rect displayedImgRect) {
+    final imgW = widget.image.width.toDouble();
+    final imgH = widget.image.height.toDouble();
+    if (imgW == 0 || imgH == 0) return displayedImgRect;
+
+    final scaleX = displayedImgRect.width / imgW;
+    final scaleY = displayedImgRect.height / imgH;
+
+    return Rect.fromLTWH(
+      displayedImgRect.left + imgRect.left * scaleX,
+      displayedImgRect.top + imgRect.top * scaleY,
+      imgRect.width * scaleX,
+      imgRect.height * scaleY,
+    );
+  }
+
+  // Convert widget coords to image pixel coords
+  Rect _widgetToImg(Rect widgetRect, Rect displayedImgRect) {
+    final imgW = widget.image.width.toDouble();
+    final imgH = widget.image.height.toDouble();
+    if (imgW == 0 || imgH == 0) return widgetRect;
+
+    final scaleX = imgW / displayedImgRect.width;
+    final scaleY = imgH / displayedImgRect.height;
+
+    return Rect.fromLTWH(
+      (widgetRect.left - displayedImgRect.left) * scaleX,
+      (widgetRect.top - displayedImgRect.top) * scaleY,
+      widgetRect.width * scaleX,
+      widgetRect.height * scaleY,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -958,47 +1025,53 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
             padding: const EdgeInsets.all(12),
             color: Colors.orange[50],
             child: const Text(
-              'Tap a box to select it, then drag to move. Use handles to resize.\n'
-              'Boxes must NOT overlap and should be top-to-bottom: RED → BLUE → YELLOW → GREEN',
+              'Tap a box to select, drag to move. Use handles to resize.\n'
+              'Top→Bottom: RED company, BLUE date, YELLOW items, GREEN total.\n'
+              'Boxes must NOT overlap and stay within the receipt.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13),
             ),
           ),
-          
+
           // Editor
           Expanded(
-            child: GestureDetector(
-              onTapDown: (details) => _onTapDown(details.localPosition),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  return Stack(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final displayedImg = _getDisplayedImageRect(
+                  constraints.maxWidth,
+                  constraints.maxHeight,
+                );
+                return GestureDetector(
+                  onTapDown: (details) => _onTapDown(details.localPosition, displayedImg),
+                  child: Stack(
                     children: [
-                      // Image
+                      // Background fill (for tap-outside detection)
                       Positioned.fill(
+                        child: Container(color: Colors.black),
+                      ),
+                      // Image (clipped to displayed rect)
+                      Positioned(
+                        left: displayedImg.left,
+                        top: displayedImg.top,
+                        width: displayedImg.width,
+                        height: displayedImg.height,
                         child: Image.memory(
                           img.encodeJpg(widget.image, quality: 85),
-                          fit: BoxFit.contain,
+                          fit: BoxFit.fill,
                         ),
                       ),
-                      
-                      // RED Box
-                      _buildBox('red', _red, Colors.red, () => _selectBox('red')),
-                      
-                      // BLUE Box
-                      _buildBox('blue', _blue, Colors.blue, () => _selectBox('blue')),
-                      
-                      // YELLOW Box
-                      _buildBox('yellow', _yellow, Colors.yellow[700]!, () => _selectBox('yellow')),
-                      
-                      // GREEN Box
-                      _buildBox('green', _green, Colors.green, () => _selectBox('green')),
+                      // Boxes
+                      _buildBox('red', _red, displayedImg, Colors.red),
+                      _buildBox('blue', _blue, displayedImg, Colors.blue),
+                      _buildBox('yellow', _yellow, displayedImg, Colors.yellow[700]!),
+                      _buildBox('green', _green, displayedImg, Colors.green),
                     ],
-                  );
-                },
-              ),
+                  ),
+                );
+              },
             ),
           ),
-          
+
           // RED box text input
           if (_selectedBox == 'red')
             Container(
@@ -1018,22 +1091,20 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
     );
   }
 
-  Widget _buildBox(String id, Rect rect, Color color, VoidCallback onTap) {
-    if (rect == Rect.zero) return const SizedBox();
-    
+  Widget _buildBox(String id, Rect imgRect, Rect displayedImg, Color color) {
+    if (imgRect == Rect.zero) return const SizedBox();
+
+    final widgetRect = _imgToWidget(imgRect, displayedImg);
+
     return Positioned(
-      left: rect.left,
-      top: rect.top,
-      width: rect.width,
-      height: rect.height,
+      left: widgetRect.left,
+      top: widgetRect.top,
+      width: widgetRect.width,
+      height: widgetRect.height,
       child: GestureDetector(
-        onTap: () {
-          onTap();
-          _selectBox(id);
-        },
-        onPanUpdate: (details) {
-          _moveBox(id, details.delta);
-        },
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _selectBox(id),
+        onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
         child: Container(
           decoration: BoxDecoration(
             border: Border.all(
@@ -1064,17 +1135,17 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
                   ),
                 ),
               ),
-              
+
               // Resize handles (only when selected)
               if (_selectedBox == id) ...[
                 // Top-left
-                Positioned(left: -4, top: -4, child: _buildHandle(color)),
+                Positioned(left: -8, top: -8, child: _buildHandle(color, 'tl', id, displayedImg)),
                 // Top-right
-                Positioned(right: -4, top: -4, child: _buildHandle(color)),
+                Positioned(right: -8, top: -8, child: _buildHandle(color, 'tr', id, displayedImg)),
                 // Bottom-left
-                Positioned(left: -4, bottom: -4, child: _buildHandle(color)),
+                Positioned(left: -8, bottom: -8, child: _buildHandle(color, 'bl', id, displayedImg)),
                 // Bottom-right
-                Positioned(right: -4, bottom: -4, child: _buildHandle(color)),
+                Positioned(right: -8, bottom: -8, child: _buildHandle(color, 'br', id, displayedImg)),
               ],
             ],
           ),
@@ -1083,73 +1154,127 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
     );
   }
 
-  Widget _buildHandle(Color color) {
-    return Container(
-      width: 12,
-      height: 12,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        border: Border.all(color: Colors.white, width: 2),
+  Widget _buildHandle(Color color, String corner, String boxId, Rect displayedImg) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanUpdate: (details) => _resizeBox(boxId, corner, details.delta, displayedImg),
+      child: Container(
+        width: 24,
+        height: 24,
+        decoration: BoxDecoration(
+          color: color,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+        ),
       ),
     );
   }
 
-  void _onTapDown(Offset position) {
-    // Check which box was tapped
-    if (_containsPoint(_red, position)) {
+  void _onTapDown(Offset position, Rect displayedImg) {
+    // Check which box was tapped (in widget coords)
+    if (_containsPointWidget(_red, position, displayedImg)) {
       _selectBox('red');
-    } else if (_containsPoint(_blue, position)) {
+    } else if (_containsPointWidget(_blue, position, displayedImg)) {
       _selectBox('blue');
-    } else if (_containsPoint(_yellow, position)) {
+    } else if (_containsPointWidget(_yellow, position, displayedImg)) {
       _selectBox('yellow');
-    } else if (_containsPoint(_green, position)) {
+    } else if (_containsPointWidget(_green, position, displayedImg)) {
       _selectBox('green');
     } else {
       setState(() => _selectedBox = null);
     }
   }
 
-  bool _containsPoint(Rect rect, Offset point) {
-    return point.dx >= rect.left && 
-           point.dx <= rect.right &&
-           point.dy >= rect.top && 
-           point.dy <= rect.bottom;
+  bool _containsPointWidget(Rect imgRect, Offset point, Rect displayedImg) {
+    if (imgRect == Rect.zero) return false;
+    final w = _imgToWidget(imgRect, displayedImg);
+    return point.dx >= w.left &&
+        point.dx <= w.right &&
+        point.dy >= w.top &&
+        point.dy <= w.bottom;
   }
 
   void _selectBox(String id) {
     setState(() => _selectedBox = id);
   }
 
-  void _moveBox(String id, Offset delta) {
-    final imgW = widget.image.width.toDouble();
-    final imgH = widget.image.height.toDouble();
-    
+  void _moveBox(String id, Offset delta, Rect displayedImg) {
     setState(() {
       switch (id) {
         case 'red':
-          _red = _clampRect(_red.shift(delta), imgW, imgH);
+          _red = _shiftImgRect(_red, delta, displayedImg);
           break;
         case 'blue':
-          _blue = _clampRect(_blue.shift(delta), imgW, imgH);
+          _blue = _shiftImgRect(_blue, delta, displayedImg);
           break;
         case 'yellow':
-          _yellow = _clampRect(_yellow.shift(delta), imgW, imgH);
+          _yellow = _shiftImgRect(_yellow, delta, displayedImg);
           break;
         case 'green':
-          _green = _clampRect(_green.shift(delta), imgW, imgH);
+          _green = _shiftImgRect(_green, delta, displayedImg);
           break;
       }
     });
   }
 
-  Rect _clampRect(Rect rect, double maxW, double maxH) {
-    return Rect.fromLTWH(
-      rect.left.clamp(0.0, maxW - 20),
-      rect.top.clamp(0.0, maxH - 20),
-      rect.width.clamp(50.0, maxW),
-      rect.height.clamp(20.0, maxH),
-    );
+  void _resizeBox(String id, String corner, Offset delta, Rect displayedImg) {
+    setState(() {
+      final scaleX = widget.image.width / displayedImg.width;
+      final scaleY = widget.image.height / displayedImg.height;
+      final dx = delta.dx * scaleX;
+      final dy = delta.dy * scaleY;
+      Rect current;
+      switch (id) {
+        case 'red': current = _red; break;
+        case 'blue': current = _blue; break;
+        case 'yellow': current = _yellow; break;
+        case 'green': current = _green; break;
+        default: return;
+      }
+
+      double newLeft = current.left;
+      double newTop = current.top;
+      double newRight = current.right;
+      double newBottom = current.bottom;
+
+      if (corner.contains('l')) {
+        newLeft = (newLeft + dx).clamp(0.0, current.right - 30);
+      }
+      if (corner.contains('r')) {
+        newRight = (newRight + dx).clamp(current.left + 30, widget.image.width.toDouble());
+      }
+      if (corner.contains('t')) {
+        newTop = (newTop + dy).clamp(0.0, current.bottom - 20);
+      }
+      if (corner.contains('b')) {
+        newBottom = (newBottom + dy).clamp(current.top + 20, widget.image.height.toDouble());
+      }
+
+      final updated = Rect.fromLTRB(newLeft, newTop, newRight, newBottom);
+
+      switch (id) {
+        case 'red': _red = updated; break;
+        case 'blue': _blue = updated; break;
+        case 'yellow': _yellow = updated; break;
+        case 'green': _green = updated; break;
+      }
+    });
+  }
+
+  Rect _shiftImgRect(Rect rect, Offset delta, Rect displayedImg) {
+    final scaleX = widget.image.width / displayedImg.width;
+    final scaleY = widget.image.height / displayedImg.height;
+    final imgDx = delta.dx * scaleX;
+    final imgDy = delta.dy * scaleY;
+    final imgW = widget.image.width.toDouble();
+    final imgH = widget.image.height.toDouble();
+
+    final newLeft = (rect.left + imgDx).clamp(0.0, imgW - 30);
+    final newTop = (rect.top + imgDy).clamp(0.0, imgH - 20);
+    final newRight = newLeft + rect.width;
+    final newBottom = newTop + rect.height;
+
+    return Rect.fromLTRB(newLeft, newTop, newRight, newBottom);
   }
 
   void _save() {
@@ -1164,7 +1289,6 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
 }
 
 // ── Column Editor Screen ──
-
 class _ColumnEditorScreen extends StatefulWidget {
   final img.Image image;
   final Rect yellowBox;
