@@ -1138,7 +1138,7 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
             Positioned.fill(
               child: IgnorePointer(child: Container(color: Colors.transparent)),
             ),
-            // Visible box body — tap selects too
+            // Visible box body — tap to select, drag handled by outer GestureDetector
             Positioned(
               left: kGrabMargin,
               top: kGrabMargin,
@@ -1147,8 +1147,6 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () => _selectBox(id),
-                onPanStart: (_) => _selectBox(id),
-                onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
                 child: Container(
                   decoration: BoxDecoration(
                     border: Border.all(
