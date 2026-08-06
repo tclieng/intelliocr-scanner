@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import 'screens/home_screen.dart';
 import 'screens/capture_screen.dart';
 import 'screens/template_list_screen.dart';
-import 'screens/scan_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -54,7 +53,6 @@ class IntelliOCRApp extends StatelessWidget {
         '/': (context) => const HomeScreen(),
         '/capture': (context) => const CaptureScreen(),
         '/templates': (context) => const TemplateListScreen(),
-        '/scan': (context) => const ScanScreen(),
       },
     );
   }

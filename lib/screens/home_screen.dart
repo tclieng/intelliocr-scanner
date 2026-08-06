@@ -13,7 +13,6 @@ import '../models/receipt_data.dart';
 import '../models/receipt_template.dart';
 import 'capture_screen.dart';
 import 'template_list_screen.dart';
-import 'scan_screen.dart';
 import 'master_templates_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -342,24 +341,6 @@ class _HomeScreenState extends State<HomeScreen> {
         centerTitle: true,
         backgroundColor: const Color(0xFFFF6B35),
         elevation: 0,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.qr_code_scanner, color: Colors.white),
-            tooltip: 'Scanner (Phase 2)',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const ScanScreen()),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.settings_applications, color: Colors.white),
-            tooltip: 'Template Setup',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const TemplateListScreen()),
-            ),
-          ),
-        ],
       ),
       body: Container(
         decoration: const BoxDecoration(
