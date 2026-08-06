@@ -51,6 +51,9 @@ class OcrBlock {
     required this.width,
     required this.height,
   });
+
+  double get centerX => x + width / 2;
+  double get centerY => y + height / 2;
 }
 
 /// Engine for matching receipt templates using OCR-based anchor detection.
@@ -60,6 +63,8 @@ class MatchEngine {
   MatchEngine._();
 
   final OcrService _ocr = OcrService();
+
+  // ── Block extraction ──
 
   Future<List<OcrBlock>> _getBlocks(File imageFile) async {
     final result = await _ocr.recognizeDetailed(imageFile);
@@ -97,6 +102,8 @@ class MatchEngine {
     }
     return blocks;
   }
+
+  // ── Template matching ──
 
   Future<AnchorMatchResult> matchTemplate(
     ReceiptTemplate template,
@@ -221,6 +228,8 @@ class MatchEngine {
     return matrix[a.length][b.length];
   }
 
+  // ── Main extraction ──
+
   Future<ReceiptData> extractWithTemplate(
     ReceiptTemplate template,
     File capturedFile,
@@ -241,26 +250,28 @@ class MatchEngine {
     final blocks = await _getBlocks(capturedFile);
     final rawText = await _ocr.recognizeText(capturedFile);
 
-    // Extract configured field ROIs
+    // Find Anchor C position for item table bottom boundary
+    double? anchorCY;
+    if (result.matchedAnchorC != null) {
+      final lower = result.matchedAnchorC!.toLowerCase();
+      for (final b in blocks) {
+        if (b.text.toLowerCase().contains(lower)) {
+          anchorCY = b.y;
+          break;
+        }
+      }
+    }
+
+    // Extract configured field ROIs (ROI Fields from template editor)
     for (final field in template.fields) {
       final mappedRoi = result.mapRoi(field.roi);
       final useDual = field.ocrEngine == 'both';
       final croppedText = await _extractRoiText(capturedFile, mappedRoi, useDual: useDual);
-      _populateField(data, field.fieldName, croppedText.trim());
+      _populateField(data, field.fieldName, croppedText.trim(), blocks);
     }
 
     // Extract item table
     if (template.itemTableConfig != null) {
-      double? anchorCY;
-      if (result.matchedAnchorC != null) {
-        final lower = result.matchedAnchorC!.toLowerCase();
-        for (final b in blocks) {
-          if (b.text.toLowerCase().contains(lower)) {
-            anchorCY = b.y;
-            break;
-          }
-        }
-      }
       data.items = await _extractItemTable(
         template.itemTableConfig!,
         result,
@@ -296,14 +307,17 @@ class MatchEngine {
     }
   }
 
-  void _populateField(ReceiptData data, String fieldName, String text) {
+  // ── Field population (FIXED: now handles ALL field types) ──
+
+  void _populateField(ReceiptData data, String fieldName, String text, List<OcrBlock> blocks) {
     if (text.isEmpty) return;
     switch (fieldName) {
+      // Predefined standard fields
       case 'store_name':
         if (data.supplier.isEmpty) data.supplier = text;
         break;
       case 'date':
-        final m = RegExp(r'(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})').firstMatch(text);
+        final m = RegExp(r'(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})').firstMatch(text);
         if (m != null) data.date = m.group(1)!;
         break;
       case 'time':
@@ -337,8 +351,63 @@ class MatchEngine {
       case 'payment_method':
         data.paymentMethod = text;
         break;
+      case 'membership_number':
+        data.membershipNumber = text;
+        break;
+      case 'service_charge':
+        // Handled via custom fields
+        data.customFields['service_charge'] = text;
+        break;
+      // ── Custom ROI fields (user-defined in template editor) ──
+      case 'item_description':
+        // Single-line ROI text: extract the product description text
+        // Usually contains product name, remove trailing numbers/amounts
+        final cleanText = _cleanItemDescription(text);
+        if (cleanText.isNotEmpty) data.description = cleanText;
+        break;
+      case 'unit_price':
+        final v = _extractDecimal(text);
+        if (v > 0) {
+          data.customFields['unit_price'] = v.toStringAsFixed(2);
+        }
+        break;
+      case 'quantity':
+        final qty = _extractInteger(text);
+        if (qty > 0) data.customFields['quantity'] = qty.toString();
+        break;
+      case 'discount':
+        final v = _extractDecimal(text);
+        if (v > 0) {
+          data.customFields['discount'] = v.toStringAsFixed(2);
+        }
+        break;
+      case 'custom_field':
+        // Generic custom field — skip (handled elsewhere)
+        break;
     }
   }
+
+  /// Clean item description text: remove trailing prices/quantities that OCR may include.
+  String _cleanItemDescription(String text) {
+    // Remove trailing numbers (prices, quantities) from description
+    var cleaned = text
+        .replaceAll(RegExp(r'\s*\d+[xX×]\s*$'), '') // e.g. "2x"
+        .replaceAll(RegExp(r'\s*[\d,]+\.\d{2}\s*$'), '') // e.g. " 12.50"
+        .replaceAll(RegExp(r'\s*RM\s*[\d,]+\.?\d*\s*$', caseSensitive: false), '') // " RM 12.50"
+        .trim();
+    // If the whole thing is just a number, return empty
+    if (RegExp(r'^[\d\s,.]+$').hasMatch(cleaned)) return '';
+    return cleaned;
+  }
+
+  /// Extract integer from text (for quantity, etc.)
+  int _extractInteger(String text) {
+    final m = RegExp(r'\b(\d+)\b').firstMatch(text);
+    if (m == null) return 0;
+    return int.tryParse(m.group(1)!) ?? 0;
+  }
+
+  // ── Item table extraction (improved for thermal receipts) ──
 
   Future<List<ItemRow>> _extractItemTable(
     ItemTableConfig config,
@@ -349,93 +418,163 @@ class MatchEngine {
   ) async {
     final items = <ItemRow>[];
 
+    // Map ROI regions
     final tableTop = match.mapRoi(config.tableRoi).top;
+    // Use Anchor C Y position if found; otherwise use template table bottom
     final tableBottom = anchorCY != null
         ? anchorCY
         : match.mapRoi(config.tableRoi).bottom;
 
+    // Filter blocks that fall within the table vertical range
     final tableBlocks = blocks
-        .where((b) => b.y >= tableTop - 20 && b.y <= tableBottom + 20)
+        .where((b) => b.y >= tableTop - 30 && b.y <= tableBottom + 30)
         .toList();
 
+    // Sort blocks by vertical position first, then horizontal
     tableBlocks.sort((a, b) {
       final dy = a.y - b.y;
-      if (dy.abs() > 15) return dy.round();
+      if (dy.abs() > 20) return dy.round();
       return a.x.compareTo(b.x);
     });
 
-    final rows = <List<OcrBlock>>[];
-    for (final block in tableBlocks) {
-      if (rows.isEmpty) {
-        rows.add([block]);
-      } else {
-        final last = rows.last.last;
-        if ((block.y - last.y).abs() <= 15) {
-          rows.last.add(block);
-        } else {
-          rows.add([block]);
-        }
-      }
-    }
-
+    // Column boundary X positions (mapped from template to captured)
     final descLeft = match.mapRoi(config.descriptionColumn).left;
     final priceLeft = match.mapRoi(config.unitPriceColumn).left;
     final amountLeft = match.mapRoi(config.amountColumn).left;
 
-    for (final row in rows) {
-      row.sort((a, b) => a.x.compareTo(b.x));
+    // Group blocks into rows using Y-coordinate clustering
+    final rows = _groupBlocksIntoRows(tableBlocks);
+
+    for (final rowBlocks in rows) {
+      // Sort by X within each row
+      rowBlocks.sort((a, b) => a.x.compareTo(b.x));
 
       String desc = '';
       int? qty;
       double? price;
       double? amount;
 
-      for (final block in row) {
-        final cx = block.x + block.width / 2;
+      for (final block in rowBlocks) {
+        final cx = block.centerX;
+        final text = block.text.trim();
+
+        if (text.isEmpty) continue;
+
+        // Skip separator lines and non-item text
+        final lower = text.toLowerCase();
+        if (_isNonItemText(lower)) continue;
+
         if (cx < descLeft) {
-          final n = _extractDecimal(block.text);
-          if (n > 0 && qty == null) qty = n.toInt();
+          // Left column: quantity
+          final n = _extractInteger(text);
+          if (n > 0 && qty == null) qty = n;
+          // Also check for "price × qty" format like "12.50×2"
+          final priceQty = RegExp(r'([\d,]+\.?\d*)\s*[xX×]\s*(\d+)').firstMatch(text);
+          if (priceQty != null) {
+            final p = double.tryParse(priceQty.group(1)!.replaceAll(',', ''));
+            final q = int.tryParse(priceQty.group(2)!);
+            if (p != null && p > 0 && price == null) price = p;
+            if (q != null && q > 0 && qty == null) qty = q;
+          }
         } else if (cx < priceLeft) {
+          // Middle column: description
           if (desc.isNotEmpty) desc += ' ';
-          desc += block.text;
+          desc += text;
         } else if (cx < amountLeft) {
-          final v = _extractDecimal(block.text);
+          // Price column: unit price
+          final v = _extractDecimal(text);
           if (v > 0 && price == null) price = v;
         } else {
-          final v = _extractDecimal(block.text);
+          // Amount column: line total
+          final v = _extractDecimal(text);
           if (v > 0 && amount == null) amount = v;
         }
       }
 
       desc = desc.trim();
       if (desc.isEmpty) continue;
+
+      // Skip non-item rows
       final lower = desc.toLowerCase();
-      if (lower.contains('subtotal') || lower.contains('total') ||
-          lower.contains('tax') || lower.contains('gst') ||
-          lower.contains('service') || lower.contains('payment') ||
-          lower.contains('grand')) continue;
+      if (_isNonItemText(lower)) continue;
+
+      // Compute amount from price × qty if not extracted
+      if (amount == null && price != null) {
+        amount = price * (qty ?? 1);
+      }
 
       items.add(ItemRow(
         quantity: qty ?? 1,
         description: desc,
         unitPrice: price ?? 0,
-        amount: amount ?? (price ?? 0) * (qty ?? 1),
+        amount: amount ?? price ?? 0,
       ));
     }
 
     return items;
   }
 
+  /// Check if text should be excluded from item rows.
+  bool _isNonItemText(String text) {
+    if (text.isEmpty) return true;
+    final nonItemKeywords = [
+      'subtotal', 'total', 'tax', 'gst', 'sst', 'service charge',
+      'payment', 'cash', 'change', 'card', 'visa', 'mastercard',
+      'rounding', 'grand total', 'amount', 'payable', 'balance',
+      'total item', 'total qty', 'total saving', 'item count',
+      'thank you', 'please', 'welcome', 'receipt', 'invoice',
+      'copy', 'original', 'return', 'exchange',
+    ];
+    for (final kw in nonItemKeywords) {
+      if (text.contains(kw)) return true;
+    }
+    // Skip if it's mostly numbers
+    if (RegExp(r'^[\d\s,.xX×-]+$').hasMatch(text)) return true;
+    // Skip barcodes (long sequences of numbers)
+    if (RegExp(r'^\d{8,}$').hasMatch(text)) return true;
+    return false;
+  }
+
+  /// Group OCR blocks into rows using adaptive Y clustering.
+  List<List<OcrBlock>> _groupBlocksIntoRows(List<OcrBlock> blocks) {
+    if (blocks.isEmpty) return [];
+
+    final rows = <List<OcrBlock>>[];
+    var currentRow = <OcrBlock>[blocks.first];
+
+    for (int i = 1; i < blocks.length; i++) {
+      final block = blocks[i];
+      final lastBlock = currentRow.last;
+      // Use adaptive threshold: 8% of average block height in the row
+      final avgHeight = currentRow.fold<double>(0, (sum, b) => sum + b.height) / currentRow.length;
+      final threshold = avgHeight * 0.8 + 8; // At least 8px gap
+
+      if ((block.y - lastBlock.y).abs() <= threshold) {
+        currentRow.add(block);
+      } else {
+        if (currentRow.isNotEmpty) rows.add(currentRow);
+        currentRow = [block];
+      }
+    }
+    if (currentRow.isNotEmpty) rows.add(currentRow);
+
+    return rows;
+  }
+
+  // ── Full-page OCR fallback (Priority 3) ──
+
   void _fillFromFullOcr(ReceiptData data, String rawText) {
     final lines = rawText.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
 
+    // ── Date ──
     if (data.date.isEmpty) {
       for (final line in lines) {
-        final m = RegExp(r'(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})').firstMatch(line);
+        final m = RegExp(r'(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})').firstMatch(line);
         if (m != null) { data.date = m.group(1)!; break; }
       }
     }
 
+    // ── Time ──
     if (data.time.isEmpty) {
       for (final line in lines) {
         final m = RegExp(r'(\d{1,2}:\d{2})').firstMatch(line);
@@ -443,49 +582,156 @@ class MatchEngine {
       }
     }
 
+    // ── Receipt number ──
     if (data.number.isEmpty) {
       for (final line in lines) {
-        final m = RegExp(r'(?:Receipt|Invoice|PV)[#\s:]*([\w/-]+)', caseSensitive: false).firstMatch(line);
+        final m = RegExp(r'(?:Receipt|Invoice|PV|Inv)[#\s:]*([\w/-]+)', caseSensitive: false).firstMatch(line);
         if (m != null) { data.number = m.group(1)!.trim(); break; }
       }
     }
 
-    if (data.amount == 0) {
-      double best = 0;
-      for (final line in lines) {
-        final lower = line.toLowerCase();
-        if (lower.contains('total') || lower.contains('payable') || lower.contains('amount')) {
-          final v = _extractDecimal(line);
-          if (v > best) best = v;
+    // ── Supplier name (if not already set) ──
+    if (data.supplier.isEmpty && lines.isNotEmpty) {
+      // Use first non-empty line as supplier if it looks like a name
+      for (final line in lines.take(3)) {
+        if (line.length >= 3 && !RegExp(r'^\d').hasMatch(line) &&
+            !line.contains(RegExp(r'[\d]{6,}'))) {
+          data.supplier = line;
+          break;
         }
       }
-      if (best == 0) {
-        for (final line in lines) {
-          for (final m in RegExp(r'(\d+\.\d{2})').allMatches(line)) {
-            final v = double.tryParse(m.group(1)!) ?? 0;
-            if (v > 1.0 && v < 100000 && v > best) best = v;
-          }
-        }
-      }
-      data.amount = best;
     }
 
-    if (data.supplier.isEmpty && lines.isNotEmpty) data.supplier = lines.first;
-
+    // ── Payment method ──
     if (data.paymentMethod.isEmpty) {
       final all = rawText.toLowerCase();
       if (all.contains('cash')) data.paymentMethod = 'Cash';
       else if (all.contains('visa')) data.paymentMethod = 'Visa';
       else if (all.contains('mastercard')) data.paymentMethod = 'Mastercard';
-      else if (all.contains('tng') || all.contains('touch \'n go')) data.paymentMethod = 'TNG eWallet';
+      else if (all.contains('tng') || all.contains('touch')) data.paymentMethod = 'TNG eWallet';
       else if (all.contains('boost')) data.paymentMethod = 'Boost';
       else if (all.contains('grabpay')) data.paymentMethod = 'GrabPay';
+      else if (all.contains('debit') || all.contains('credit')) data.paymentMethod = 'Card';
+    }
+
+    // ── TOTAL amount (Priority strategy) ──
+    if (data.amount == 0) {
+      _extractTotalFromFullOcr(data, lines, rawText);
+    }
+
+    // ── Subtotal ──
+    if (data.subtotal == 0) {
+      for (final line in lines) {
+        final lower = line.toLowerCase();
+        if (lower.contains('sub total') || lower.contains('subtotal')) {
+          final v = _extractDecimal(line);
+          if (v > 0) { data.subtotal = v; break; }
+        }
+      }
+    }
+
+    // ── Tax ──
+    if (data.tax == 0) {
+      for (final line in lines) {
+        final lower = line.toLowerCase();
+        if (lower.contains('tax') || lower.contains('gst') || lower.contains('sst')) {
+          final v = _extractDecimal(line);
+          if (v > 0) { data.tax = v; break; }
+        }
+      }
     }
   }
 
+  /// Extract total amount using Priority 3 strategy (Strategy C2):
+  /// Priority 1: Find "TOTAL RM X.XX" or "Total X.XX" near anchor C match
+  /// Priority 2: Find "Grand Total" or "Amount Due" label
+  /// Priority 3: Find largest decimal value > RM 1.0 in bottom 30% of receipt
+  void _extractTotalFromFullOcr(ReceiptData data, List<String> lines, String rawText) {
+    final allLines = lines.toList();
+
+    // ── Priority 1: TOTAL label line ──
+    for (final line in allLines) {
+      final lower = line.toLowerCase();
+      // Must be a "TOTAL" labeled line (not "Total Item", "Total Qty")
+      if (lower.contains('total') && !lower.contains('item') && !lower.contains('qty') &&
+          !lower.contains('saving') && !lower.contains('discount')) {
+        final v = _extractDecimal(line);
+        if (v > 1.0) { data.amount = v; return; }
+      }
+    }
+
+    // ── Priority 2: Grand Total / Amount Due / Total Payable ──
+    for (final line in allLines) {
+      final lower = line.toLowerCase();
+      if (lower.contains('grand') || lower.contains('amount') ||
+          (lower.contains('total') && lower.contains('payable'))) {
+        final v = _extractDecimal(line);
+        if (v > 1.0) { data.amount = v; return; }
+      }
+    }
+
+    // ── Priority 3: Bottom 30% scan — largest decimal > RM 1.0 ──
+    final scanStartIdx = (allLines.length * 0.7).round();
+    double best = 0;
+    for (int i = scanStartIdx; i < allLines.length; i++) {
+      final line = allLines[i];
+      final lower = line.toLowerCase();
+      // Skip lines that are clearly not the total
+      if (lower.contains('cash') || lower.contains('change') ||
+          lower.contains('card') || lower.contains('payment')) continue;
+      // Skip lines with item counts or quantities
+      if (RegExp(r'\d+\s*[xX×]\s*\d+').hasMatch(line)) continue;
+
+      final v = _extractDecimal(line);
+      if (v > 1.0 && v < 100000 && v > best) best = v;
+    }
+
+    if (best > 0) { data.amount = best; return; }
+
+    // ── Priority 4: Full receipt scan (last resort) ──
+    for (final line in allLines.reversed) {
+      final lower = line.toLowerCase();
+      if (lower.contains('cash') || lower.contains('change')) continue;
+      final v = _extractDecimal(line);
+      if (v > 1.0 && v < 100000) { data.amount = v; return; }
+    }
+  }
+
+  // ── Decimal extraction (supports RM, comma separators, Malaysian format) ──
+
   double _extractDecimal(String text) {
-    final m = RegExp(r'(?:rm\s*)?([\d,]+\.?\d{0,2})', caseSensitive: false).firstMatch(text);
-    if (m == null) return 0;
-    return double.tryParse(m.group(1)!.replaceAll(',', '')) ?? 0;
+    // Pattern 1: RM followed by optional spaces and number (with optional comma separators)
+    // e.g. "RM 372.45", "RM372.45", "RM 1,234.56"
+    var m = RegExp(r'RM\s*([\d,]+\.?\d{0,2})', caseSensitive: false).firstMatch(text);
+    if (m != null) {
+      final parsed = double.tryParse(m.group(1)!.replaceAll(',', ''));
+      if (parsed != null && parsed > 0) return parsed;
+    }
+
+    // Pattern 2: Number followed by RM suffix
+    // e.g. "372.45 RM"
+    m = RegExp(r'([\d,]+\.\d{2})\s*RM', caseSensitive: false).firstMatch(text);
+    if (m != null) {
+      final parsed = double.tryParse(m.group(1)!.replaceAll(',', ''));
+      if (parsed != null && parsed > 0) return parsed;
+    }
+
+    // Pattern 3: Plain decimal with comma separators
+    // e.g. "1,234.56" or "372.45"
+    m = RegExp(r'\b([\d,]+\.\d{2})\b').firstMatch(text);
+    if (m != null) {
+      final parsed = double.tryParse(m.group(1)!.replaceAll(',', ''));
+      if (parsed != null && parsed > 0) return parsed;
+    }
+
+    // Pattern 4: Number with comma separator and optional decimal
+    // e.g. "1,234" → treat as integer
+    m = RegExp(r'\b([\d,]+)\b').firstMatch(text);
+    if (m != null) {
+      final parsed = double.tryParse(m.group(1)!.replaceAll(',', ''));
+      if (parsed != null && parsed > 0) return parsed;
+    }
+
+    return 0;
   }
 }
