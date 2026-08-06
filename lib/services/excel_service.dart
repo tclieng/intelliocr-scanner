@@ -112,6 +112,31 @@ class ExcelService {
       }
     }
 
+    // Dynamic TOTAL row — sums all detected item amounts (Phase 5).
+    if (itemRow > 1) {
+      double total = 0;
+      int itemCount = 0;
+      for (final r in receipts) {
+        for (final it in r.items) {
+          total += it.amount;
+          itemCount++;
+        }
+      }
+      final totalStyle = CellStyle(
+        bold: true,
+        backgroundColorHex: ExcelColor.fromHexString('#FFE0CC'),
+        fontColorHex: ExcelColor.fromHexString('#C2410C'),
+      );
+      final labelCell = itemSheet.cell(
+          CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: itemRow));
+      labelCell.value = TextCellValue('TOTAL ($itemCount items)');
+      labelCell.cellStyle = totalStyle;
+      final sumCell = itemSheet.cell(
+          CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: itemRow));
+      sumCell.value = DoubleCellValue(total);
+      sumCell.cellStyle = totalStyle;
+    }
+
     // Save file
     final appDir = await getApplicationDocumentsDirectory();
     final downloadsDir = Directory('${appDir.path}/downloads');

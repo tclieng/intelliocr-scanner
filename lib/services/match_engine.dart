@@ -270,8 +270,25 @@ class MatchEngine {
       _populateField(data, field.fieldName, croppedText.trim(), blocks);
     }
 
-    // Extract item table
-    if (template.itemTableConfig != null) {
+    // Extract TOTAL from GREEN box (anchorC) if defined — most reliable source
+    if (template.anchorC != null && template.anchorC!.roi != ui.Rect.zero) {
+      final greenRoi = result.mapRoi(template.anchorC!.roi);
+      final greenText = await _extractRoiText(capturedFile, greenRoi, useDual: true);
+      final gv = _extractDecimal(greenText);
+      if (gv > 0) data.amount = gv;
+    }
+
+    // Extract item rows from YELLOW box (new, column-based, subtotal-delimiter rows)
+    if (template.yellowBoxConfig != null) {
+      data.items = await _extractYellowBox(
+        template.yellowBoxConfig!,
+        result,
+        capturedFile,
+        blocks,
+        anchorCY,
+      );
+    } else if (template.itemTableConfig != null) {
+      // Legacy fallback for pre-yellowbox templates
       data.items = await _extractItemTable(
         template.itemTableConfig!,
         result,
@@ -405,6 +422,170 @@ class MatchEngine {
     final m = RegExp(r'\b(\d+)\b').firstMatch(text);
     if (m == null) return 0;
     return int.tryParse(m.group(1)!) ?? 0;
+  }
+
+  // ── YELLOW box extraction (column-based, subtotal-delimiter row detection) ──
+
+  /// Extract item rows from the YELLOW box using user-defined columns.
+  /// Rows are delimited by a decimal value in the `amount` column (the per-line
+  /// subtotal). Description-only rows that precede an amount row are merged into
+  /// it, which handles wrapped item names that spill onto a second line.
+  Future<List<ItemRow>> _extractYellowBox(
+    YellowBoxConfig cfg,
+    AnchorMatchResult match,
+    File imageFile,
+    List<OcrBlock> blocks,
+    double? anchorCY,
+  ) async {
+    final items = <ItemRow>[];
+    if (cfg.columns.isEmpty) return items;
+
+    final mappedYellow = match.mapRoi(cfg.roi);
+    final topY = mappedYellow.top;
+    final bottomY = anchorCY != null ? anchorCY : mappedYellow.bottom;
+    final leftX = mappedYellow.left;
+    final rightX = mappedYellow.right;
+    final scaleX = match.scaleX;
+
+    final cols = cfg.sortedColumns;
+    double colLeft(int i) => leftX + cols[i].x * scaleX;
+    double colRight(int i) => leftX + (cols[i].x + cols[i].width) * scaleX;
+
+    // Index of the amount (subtotal) column — rightmost decimal delimiter.
+    int amountIdx = cols.indexWhere((c) => c.name == 'amount');
+    if (amountIdx < 0) amountIdx = cols.length - 1;
+
+    int columnOf(OcrBlock b) {
+      final cx = b.centerX;
+      for (int i = 0; i < cols.length; i++) {
+        if (cx >= colLeft(i) - 4 && cx <= colRight(i) + 4) return i;
+      }
+      int best = 0;
+      double bestD = double.infinity;
+      for (int i = 0; i < cols.length; i++) {
+        final center = (colLeft(i) + colRight(i)) / 2;
+        final d = (cx - center).abs();
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      }
+      return best;
+    }
+
+    final tol = 8.0;
+    final yellowBlocks = blocks.where((b) {
+      final cy = b.centerY;
+      final cx = b.centerX;
+      return cy >= topY - tol &&
+          cy <= bottomY + tol &&
+          cx >= leftX - tol &&
+          cx <= rightX + tol;
+    }).toList();
+
+    if (yellowBlocks.isEmpty) return items;
+
+    yellowBlocks.sort((a, b) {
+      final dy = a.y - b.y;
+      if (dy.abs() > 6) return dy.round();
+      return a.x.compareTo(b.x);
+    });
+
+    final rawRows = _groupBlocksIntoRows(yellowBlocks);
+
+    bool rowHasAmount(List<OcrBlock> row) {
+      for (final b in row) {
+        if (columnOf(b) == amountIdx) {
+          if (_extractDecimal(b.text) > 0) return true;
+        }
+      }
+      return false;
+    }
+
+    String pendingDesc = '';
+    final requireAmount = cfg.detectRowsBySubtotal;
+
+    for (final row in rawRows) {
+      final colText = <int, List<String>>{};
+      for (final b in row) {
+        final ci = columnOf(b);
+        (colText[ci] ??= []).add(b.text.trim());
+      }
+
+      var hasAmount = rowHasAmount(row);
+      if (!requireAmount) hasAmount = true;
+
+      String descText = (colText[0] ?? []).join(' ').trim();
+
+      if (!hasAmount) {
+        // Description-only continuation (wrapped name or header) — buffer it.
+        final low = descText.toLowerCase();
+        final isHeader = low.contains('item') ||
+            low.contains('qty') ||
+            low.contains('price') ||
+            low.contains('amt') ||
+            low.contains('description') ||
+            low.contains('unit');
+        if (!isHeader && descText.isNotEmpty) {
+          pendingDesc =
+              pendingDesc.isEmpty ? descText : '$pendingDesc $descText';
+        }
+        continue;
+      }
+
+      // Amount row — merge any buffered leading description lines.
+      if (pendingDesc.isNotEmpty) {
+        descText = descText.isEmpty ? pendingDesc : '$pendingDesc $descText';
+        pendingDesc = '';
+      }
+
+      if (_isNonItemText(descText.toLowerCase())) continue;
+
+      int qty = 1;
+      double unitPrice = 0, discount = 0, amount = 0;
+
+      for (int i = 0; i < cols.length; i++) {
+        final name = cols[i].name;
+        final txt = (colText[i] ?? []).join(' ').trim();
+        if (txt.isEmpty) continue;
+        switch (name) {
+          case 'quantity':
+            final q = _extractInteger(txt);
+            if (q > 0) qty = q;
+            break;
+          case 'unit_price':
+            final v = _extractDecimal(txt);
+            if (v > 0) unitPrice = v;
+            break;
+          case 'discount':
+            final v = _extractDecimal(txt);
+            if (v > 0) discount = v;
+            break;
+          case 'amount':
+            final v = _extractDecimal(txt);
+            if (v > 0) amount = v;
+            break;
+          default:
+            if (name == 'item_description' && descText.isEmpty) {
+              descText = _cleanItemDescription(txt);
+            }
+        }
+      }
+
+      descText = descText.trim();
+      if (descText.isEmpty) continue;
+      if (amount == 0 && unitPrice > 0) amount = unitPrice * qty;
+
+      items.add(ItemRow(
+        quantity: qty,
+        description: descText,
+        unitPrice: unitPrice,
+        discount: discount,
+        amount: amount,
+      ));
+    }
+
+    return items;
   }
 
   // ── Item table extraction (improved for thermal receipts) ──
