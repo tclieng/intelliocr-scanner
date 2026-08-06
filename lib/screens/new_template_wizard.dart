@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
@@ -30,6 +31,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
   late ReceiptTemplate _template;
   File? _masterImage;
   img.Image? _processedImage;
+  Uint8List? _cachedJpg; // re-encoded JPEG cache to avoid encode-on-every-rebuild
 
   // Four boxes state (Step 2)
   Rect _redBox = Rect.zero;    // RED: Company Name (Anchor A)
@@ -98,6 +100,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     _masterImage = File(photo.path.replaceAll('.jpg', '_master.jpg'));
     await _masterImage!.writeAsBytes(processedBytes);
     _processedImage = img.decodeImage(processedBytes);
+    _cachedJpg = processedBytes;
 
     if (_processedImage != null) {
       _template.masterWidth = _processedImage!.width.toDouble();
@@ -117,6 +120,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     _masterImage = File(image.path.replaceAll('.jpg', '_master.jpg'));
     await _masterImage!.writeAsBytes(processedBytes);
     _processedImage = img.decodeImage(processedBytes);
+    _cachedJpg = processedBytes;
 
     if (_processedImage != null) {
       _template.masterWidth = _processedImage!.width.toDouble();
@@ -145,9 +149,10 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
       _processedImage = img.copyRotate(_processedImage!, angle: degrees);
       final bytes = img.encodeJpg(_processedImage!, quality: 92);
       _masterImage?.writeAsBytes(bytes);
+      _cachedJpg = bytes;
       _template.masterWidth = _processedImage!.width.toDouble();
       _template.masterHeight = _processedImage!.height.toDouble();
-      
+
       // Reinitialize boxes for new dimensions
       _initializeBoxes();
     });
@@ -481,8 +486,9 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: Image.memory(
-                      img.encodeJpg(_processedImage!, quality: 85),
+                      _cachedJpg!,
                       fit: BoxFit.contain,
+                      gaplessPlayback: true,
                     ),
                   ),
                 );
@@ -595,8 +601,9 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
               width: displayedW,
               height: displayedH,
               child: Image.memory(
-                img.encodeJpg(_processedImage!, quality: 85),
+                _cachedJpg!,
                 fit: BoxFit.fill,
+                gaplessPlayback: true,
               ),
             ),
 
@@ -749,8 +756,9 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
             // Image
             Positioned.fill(
               child: Image.memory(
-                img.encodeJpg(_processedImage!, quality: 85),
+                _cachedJpg!,
                 fit: BoxFit.contain,
+                gaplessPlayback: true,
               ),
             ),
             
@@ -956,6 +964,7 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
   late Rect _green;
   String? _selectedBox;
   final _textController = TextEditingController();
+  late final Uint8List _cachedJpg; // encoded once, reused every frame
 
   @override
   void initState() {
@@ -964,6 +973,7 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
     _blue = widget.initialBlue;
     _yellow = widget.initialYellow;
     _green = widget.initialGreen;
+    _cachedJpg = img.encodeJpg(widget.image, quality: 85);
   }
 
   @override
@@ -1077,8 +1087,9 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
                         width: displayedImg.width,
                         height: displayedImg.height,
                         child: Image.memory(
-                          img.encodeJpg(widget.image, quality: 85),
+                          _cachedJpg,
                           fit: BoxFit.fill,
+                          gaplessPlayback: true,
                         ),
                       ),
                       // Boxes
@@ -1380,11 +1391,13 @@ class _ColumnEditorScreen extends StatefulWidget {
 class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
   late List<_ColumnLine> _lines;
   String? _selectedLine;
+  late final Uint8List _cachedJpg; // encoded once, reused every frame
 
   @override
   void initState() {
     super.initState();
     _lines = List.from(widget.initialLines);
+    _cachedJpg = img.encodeJpg(widget.image, quality: 85);
   }
 
   // Compute the actual displayed image rect (BoxFit.contain)
@@ -1462,8 +1475,9 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
                       width: displayedImg.width,
                       height: displayedImg.height,
                       child: Image.memory(
-                        img.encodeJpg(widget.image, quality: 85),
+                        _cachedJpg,
                         fit: BoxFit.fill,
+                        gaplessPlayback: true,
                       ),
                     ),
 
