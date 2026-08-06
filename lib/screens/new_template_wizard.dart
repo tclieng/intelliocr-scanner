@@ -1118,11 +1118,15 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
     final widgetRect = _imgToWidget(imgRect, displayedImg);
     final isSelected = _selectedBox == id;
 
+    // Extend the hit area 14px on every side so taps just outside the box
+    // still grab it. The colored visible box stays at the original size.
+    const double kGrabMargin = 14;
+
     return Positioned(
-      left: widgetRect.left,
-      top: widgetRect.top,
-      width: widgetRect.width,
-      height: widgetRect.height,
+      left: widgetRect.left - kGrabMargin,
+      top: widgetRect.top - kGrabMargin,
+      width: widgetRect.width + kGrabMargin * 2,
+      height: widgetRect.height + kGrabMargin * 2,
       // Listener for instant touch response (lower latency than GestureDetector)
       child: Listener(
         behavior: HitTestBehavior.opaque,
@@ -1133,61 +1137,80 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
             _moveBox(id, event.delta, displayedImg);
           }
         },
-        child: Container(
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: isSelected ? color : color.withOpacity(0.7),
-              width: isSelected ? 3 : 2,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            // Transparent grab ring (margin area) — keeps hit area big
+            // without changing the visible box.
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(color: Colors.transparent),
+              ),
             ),
-            color: color.withOpacity(isSelected ? 0.20 : 0.15),
-          ),
+            // Visible box
+            Positioned(
+              left: kGrabMargin,
+              top: kGrabMargin,
+              width: widgetRect.width,
+              height: widgetRect.height,
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: isSelected ? color : color.withOpacity(0.7),
+                    width: isSelected ? 3 : 2,
+                  ),
+                  color: color.withOpacity(isSelected ? 0.20 : 0.15),
+                ),
           child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              // Label
-              Positioned(
-                left: 4,
-                top: 2,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: color,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    id.toUpperCase(),
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
+                  clipBehavior: Clip.none,
+                  children: [
+                    // Label
+                    Positioned(
+                      left: 4,
+                      top: 2,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          id.toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+
+                    // Resize handles (always visible for easier access)
+                    Positioned(
+                      left: -22,
+                      top: -22,
+                      child: _buildHandle(color, 'tl', id, displayedImg),
+                    ),
+                    Positioned(
+                      right: -22,
+                      top: -22,
+                      child: _buildHandle(color, 'tr', id, displayedImg),
+                    ),
+                    Positioned(
+                      left: -22,
+                      bottom: -22,
+                      child: _buildHandle(color, 'bl', id, displayedImg),
+                    ),
+                    Positioned(
+                      right: -22,
+                      bottom: -22,
+                      child: _buildHandle(color, 'br', id, displayedImg),
+                    ),
+                  ],
                 ),
               ),
-
-              // Resize handles (always visible for easier access)
-              Positioned(
-                left: -16,
-                top: -16,
-                child: _buildHandle(color, 'tl', id, displayedImg),
-              ),
-              Positioned(
-                right: -16,
-                top: -16,
-                child: _buildHandle(color, 'tr', id, displayedImg),
-              ),
-              Positioned(
-                left: -16,
-                bottom: -16,
-                child: _buildHandle(color, 'bl', id, displayedImg),
-              ),
-              Positioned(
-                right: -16,
-                bottom: -16,
-                child: _buildHandle(color, 'br', id, displayedImg),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -1202,8 +1225,8 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
         }
       },
       child: Container(
-        width: 32,
-        height: 32,
+        width: 44,
+        height: 44,
         decoration: BoxDecoration(
           color: color,
           shape: BoxShape.circle,
@@ -1222,7 +1245,7 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
               : corner == 'bl' ? Icons.south_west
               : Icons.south_east,
           color: Colors.white,
-          size: 16,
+          size: 22,
         ),
       ),
     );
@@ -1470,40 +1493,64 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
                     ),
 
                     // Vertical lines (using Listener for instant touch response)
-                    ..._lines.where((l) => l.isVertical).map((line) {
-                      final xInYellow = line.x * scaleX;
-                      final xAbsolute = yellowLeft + xInYellow;
-                      return Positioned(
-                        left: xAbsolute - 24,
-                        top: yellowTop,
-                        width: 48,
-                        height: yellowH,
-                        child: Listener(
-                          behavior: HitTestBehavior.opaque,
-                          onPointerDown: (_) => _selectLine(line),
-                          onPointerMove: (event) {
-                            if (event.buttons & 1 != 0) {
-                              _moveLine(line, event.delta.dx / scaleX);
-                            }
-                          },
-                          child: Center(
-                            child: Container(
-                              width: 6,
-                              height: yellowH,
-                              decoration: BoxDecoration(
-                                color: _selectedLine == line.id ? Colors.purple : Colors.purple[400],
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.4),
-                                    blurRadius: 2,
-                                  ),
-                                ],
+                    ...(() {
+                      // Sort by x so we can compute gap to each neighbor.
+                      final vertical = _lines.where((l) => l.isVertical).toList()
+                        ..sort((a, b) => a.x.compareTo(b.x));
+                      return vertical.map((line) {
+                        final idx = vertical.indexOf(line);
+                        // Distance in *displayed pixels* to the nearest other line.
+                        double gapPx = double.infinity;
+                        if (idx > 0) {
+                          gapPx = (line.x - vertical[idx - 1].x).abs() * scaleX;
+                        }
+                        if (idx < vertical.length - 1) {
+                          final rightGap =
+                              (vertical[idx + 1].x - line.x).abs() * scaleX;
+                          if (rightGap < gapPx) gapPx = rightGap;
+                        }
+                        // Hit half-width: max 24 (=48px total), shrunk if
+                        // neighbors are close so zones never overlap. Minimum
+                        // 18 (=36px total) keeps small yellow boxes usable.
+                        final hitHalf = gapPx.isFinite
+                            ? (gapPx / 2 - 3).clamp(18.0, 24.0)
+                            : 24.0;
+                        final xInYellow = line.x * scaleX;
+                        final xAbsolute = yellowLeft + xInYellow;
+                        return Positioned(
+                          left: xAbsolute - hitHalf,
+                          top: yellowTop,
+                          width: hitHalf * 2,
+                          height: yellowH,
+                          child: Listener(
+                            behavior: HitTestBehavior.opaque,
+                            onPointerDown: (_) => _selectLine(line),
+                            onPointerMove: (event) {
+                              if (event.buttons & 1 != 0) {
+                                _moveLine(line, event.delta.dx / scaleX);
+                              }
+                            },
+                            child: Center(
+                              child: Container(
+                                width: 8,
+                                height: yellowH,
+                                decoration: BoxDecoration(
+                                  color: _selectedLine == line.id
+                                      ? Colors.purple
+                                      : Colors.purple[400],
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withOpacity(0.4),
+                                      blurRadius: 2,
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
-                        ),
-                      );
-                    }),
+                        );
+                      });
+                    })(),
 
                     // Long press overlay for deleting the selected line
                     Positioned.fill(
