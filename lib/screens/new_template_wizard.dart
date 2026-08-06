@@ -62,13 +62,24 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
   bool get _canProceed {
     switch (_currentStep) {
       case 0: return _masterImage != null;
-      case 1: return _redBox != Rect.zero && _blueBox != Rect.zero && 
+      case 1: return _redBox != Rect.zero && _blueBox != Rect.zero &&
                     _yellowBox != Rect.zero && _greenBox != Rect.zero;
-      case 2: return _verticalLines.length >= 2; // At least 2 vertical lines
-      case 3: return _supplierName.isNotEmpty;
+      case 2: return _linesCount >= 2; // At least 2 vertical lines = 1 column
+      case 3: return _canSave; // All boxes set, lines defined, name entered
       default: return false;
     }
   }
+
+  int get _linesCount => _verticalLines.where((l) => l.isVertical).length;
+
+  bool get _canSave =>
+      _masterImage != null &&
+      _redBox != Rect.zero &&
+      _blueBox != Rect.zero &&
+      _yellowBox != Rect.zero &&
+      _greenBox != Rect.zero &&
+      _linesCount >= 2 &&
+      _redExpectedText.trim().isNotEmpty;
 
   // ── Step 1: Capture Master Receipt ──
 
@@ -813,16 +824,26 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton.icon(
-              onPressed: _canProceed ? _showSaveDialog : null,
+              onPressed: _showSaveDialog,
               icon: const Icon(Icons.save),
               label: const Text('Save Template'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
+                backgroundColor: _canSave ? Colors.green : Colors.grey,
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 16),
+                textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
             ),
           ),
+          if (!_canSave)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                '⚠ Complete all steps: capture image, set 4 boxes, add ≥2 vertical lines, enter company name',
+                style: TextStyle(fontSize: 12, color: Colors.orange[800]),
+                textAlign: TextAlign.center,
+              ),
+            ),
         ],
       ),
     );
@@ -1095,25 +1116,33 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
     if (imgRect == Rect.zero) return const SizedBox();
 
     final widgetRect = _imgToWidget(imgRect, displayedImg);
+    final isSelected = _selectedBox == id;
 
     return Positioned(
       left: widgetRect.left,
       top: widgetRect.top,
       width: widgetRect.width,
       height: widgetRect.height,
-      child: GestureDetector(
+      // Listener for instant touch response (lower latency than GestureDetector)
+      child: Listener(
         behavior: HitTestBehavior.opaque,
-        onTap: () => _selectBox(id),
-        onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
+        onPointerDown: (_) => _selectBox(id),
+        onPointerMove: (event) {
+          if (event.buttons & 1 != 0) {
+            // Button down = drag
+            _moveBox(id, event.delta, displayedImg);
+          }
+        },
         child: Container(
           decoration: BoxDecoration(
             border: Border.all(
-              color: _selectedBox == id ? color : color.withOpacity(0.7),
-              width: _selectedBox == id ? 3 : 2,
+              color: isSelected ? color : color.withOpacity(0.7),
+              width: isSelected ? 3 : 2,
             ),
-            color: color.withOpacity(0.15),
+            color: color.withOpacity(isSelected ? 0.20 : 0.15),
           ),
           child: Stack(
+            clipBehavior: Clip.none,
             children: [
               // Label
               Positioned(
@@ -1136,17 +1165,27 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
                 ),
               ),
 
-              // Resize handles (only when selected)
-              if (_selectedBox == id) ...[
-                // Top-left
-                Positioned(left: -8, top: -8, child: _buildHandle(color, 'tl', id, displayedImg)),
-                // Top-right
-                Positioned(right: -8, top: -8, child: _buildHandle(color, 'tr', id, displayedImg)),
-                // Bottom-left
-                Positioned(left: -8, bottom: -8, child: _buildHandle(color, 'bl', id, displayedImg)),
-                // Bottom-right
-                Positioned(right: -8, bottom: -8, child: _buildHandle(color, 'br', id, displayedImg)),
-              ],
+              // Resize handles (always visible for easier access)
+              Positioned(
+                left: -16,
+                top: -16,
+                child: _buildHandle(color, 'tl', id, displayedImg),
+              ),
+              Positioned(
+                right: -16,
+                top: -16,
+                child: _buildHandle(color, 'tr', id, displayedImg),
+              ),
+              Positioned(
+                left: -16,
+                bottom: -16,
+                child: _buildHandle(color, 'bl', id, displayedImg),
+              ),
+              Positioned(
+                right: -16,
+                bottom: -16,
+                child: _buildHandle(color, 'br', id, displayedImg),
+              ),
             ],
           ),
         ),
@@ -1155,16 +1194,35 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
   }
 
   Widget _buildHandle(Color color, String corner, String boxId, Rect displayedImg) {
-    return GestureDetector(
+    return Listener(
       behavior: HitTestBehavior.opaque,
-      onPanUpdate: (details) => _resizeBox(boxId, corner, details.delta, displayedImg),
+      onPointerMove: (event) {
+        if (event.buttons & 1 != 0) {
+          _resizeBox(boxId, corner, event.delta, displayedImg);
+        }
+      },
       child: Container(
-        width: 24,
-        height: 24,
+        width: 32,
+        height: 32,
         decoration: BoxDecoration(
           color: color,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
+          border: Border.all(color: Colors.white, width: 3),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.3),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Icon(
+          corner == 'tl' ? Icons.north_west
+              : corner == 'tr' ? Icons.north_east
+              : corner == 'bl' ? Icons.south_west
+              : Icons.south_east,
+          color: Colors.white,
+          size: 16,
         ),
       ),
     );
@@ -1289,6 +1347,7 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
 }
 
 // ── Column Editor Screen ──
+
 class _ColumnEditorScreen extends StatefulWidget {
   final img.Image image;
   final Rect yellowBox;
@@ -1314,6 +1373,24 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
     _lines = List.from(widget.initialLines);
   }
 
+  // Compute the actual displayed image rect (BoxFit.contain)
+  Rect _getDisplayedImageRect(double maxW, double maxH) {
+    final imgW = widget.image.width.toDouble();
+    final imgH = widget.image.height.toDouble();
+    if (imgW == 0 || imgH == 0) return Rect.fromLTWH(0, 0, maxW, maxH);
+
+    final scaleW = maxW / imgW;
+    final scaleH = maxH / imgH;
+    final scale = scaleW < scaleH ? scaleW : scaleH;
+
+    final displayedW = imgW * scale;
+    final displayedH = imgH * scale;
+    final offsetX = (maxW - displayedW) / 2;
+    final offsetY = (maxH - displayedH) / 2;
+
+    return Rect.fromLTWH(offsetX, offsetY, displayedW, displayedH);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1335,38 +1412,54 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
             padding: const EdgeInsets.all(12),
             color: Colors.purple[50],
             child: const Text(
-              'Draw vertical lines to define column boundaries.\n'
-              'Tap to select, drag to move. Long press to delete.',
+              'Tap + button to add a vertical line (max 5).\n'
+              'Drag lines to move. Long press a line to delete.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 13),
             ),
           ),
-          
+
           // Editor
           Expanded(
-            child: GestureDetector(
-              onTapDown: (details) => _onTapDown(details.localPosition),
-              onLongPress: () => _deleteSelectedLine(),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final scale = constraints.maxWidth / widget.image.width;
-                  
-                  return Stack(
-                    children: [
-                      // Image
-                      Positioned.fill(
-                        child: Image.memory(
-                          img.encodeJpg(widget.image, quality: 85),
-                          fit: BoxFit.contain,
-                        ),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final displayedImg = _getDisplayedImageRect(
+                  constraints.maxWidth,
+                  constraints.maxHeight,
+                );
+                final scaleX = displayedImg.width / widget.image.width;
+                final scaleY = displayedImg.height / widget.image.height;
+
+                final yellowLeft = displayedImg.left + widget.yellowBox.left * scaleX;
+                final yellowTop = displayedImg.top + widget.yellowBox.top * scaleY;
+                final yellowW = widget.yellowBox.width * scaleX;
+                final yellowH = widget.yellowBox.height * scaleY;
+
+                return Stack(
+                  children: [
+                    // Background
+                    Positioned.fill(
+                      child: Container(color: Colors.black),
+                    ),
+                    // Image
+                    Positioned(
+                      left: displayedImg.left,
+                      top: displayedImg.top,
+                      width: displayedImg.width,
+                      height: displayedImg.height,
+                      child: Image.memory(
+                        img.encodeJpg(widget.image, quality: 85),
+                        fit: BoxFit.fill,
                       ),
-                      
-                      // YELLOW box highlight
-                      Positioned(
-                        left: widget.yellowBox.left * scale,
-                        top: widget.yellowBox.top * scale,
-                        width: widget.yellowBox.width * scale,
-                        height: widget.yellowBox.height * scale,
+                    ),
+
+                    // YELLOW box highlight
+                    Positioned(
+                      left: yellowLeft,
+                      top: yellowTop,
+                      width: yellowW,
+                      height: yellowH,
+                      child: IgnorePointer(
                         child: Container(
                           decoration: BoxDecoration(
                             border: Border.all(color: Colors.yellow[700]!, width: 3),
@@ -1374,56 +1467,82 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
                           ),
                         ),
                       ),
-                      
-                      // Vertical lines
-                      ..._lines.where((l) => l.isVertical).map((line) {
-                        final x = widget.yellowBox.left * scale + line.x * scale;
-                        return Positioned(
-                          left: x - 1,
-                          top: widget.yellowBox.top * scale,
-                          child: GestureDetector(
-                            onTap: () => _selectLine(line),
-                            onPanUpdate: (details) => _moveLine(line, details.delta.dx / scale),
+                    ),
+
+                    // Vertical lines (using Listener for instant touch response)
+                    ..._lines.where((l) => l.isVertical).map((line) {
+                      final xInYellow = line.x * scaleX;
+                      final xAbsolute = yellowLeft + xInYellow;
+                      return Positioned(
+                        left: xAbsolute - 24,
+                        top: yellowTop,
+                        width: 48,
+                        height: yellowH,
+                        child: Listener(
+                          behavior: HitTestBehavior.opaque,
+                          onPointerDown: (_) => _selectLine(line),
+                          onPointerMove: (event) {
+                            if (event.buttons & 1 != 0) {
+                              _moveLine(line, event.delta.dx / scaleX);
+                            }
+                          },
+                          child: Center(
                             child: Container(
-                              width: 3,
-                              height: widget.yellowBox.height * scale,
-                              color: _selectedLine == line.id ? Colors.purple : Colors.purple[300],
+                              width: 6,
+                              height: yellowH,
+                              decoration: BoxDecoration(
+                                color: _selectedLine == line.id ? Colors.purple : Colors.purple[400],
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.4),
+                                    blurRadius: 2,
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
-                        );
-                      }),
-                      
-                      // Add line button
-                      Positioned(
-                        right: 16,
-                        bottom: 16,
-                        child: FloatingActionButton(
-                          onPressed: _addLine,
-                          backgroundColor: Colors.purple,
-                          child: const Icon(Icons.add, color: Colors.white),
                         ),
+                      );
+                    }),
+
+                    // Long press overlay for deleting the selected line
+                    Positioned.fill(
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.translucent,
+                        onLongPress: _deleteSelectedLine,
+                        child: const SizedBox.expand(),
                       ),
-                    ],
-                  );
-                },
-              ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+
+          // Action bar
+          Container(
+            padding: const EdgeInsets.all(16),
+            color: Colors.white,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Lines: ${_lines.where((l) => l.isVertical).length} / 5',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                ),
+                FloatingActionButton(
+                  onPressed: _lines.where((l) => l.isVertical).length >= 5
+                      ? null
+                      : _addLine,
+                  backgroundColor: Colors.purple,
+                  child: const Icon(Icons.add, color: Colors.white),
+                ),
+              ],
             ),
           ),
         ],
       ),
     );
-  }
-
-  void _onTapDown(Offset position) {
-    // Check if tapped on a line
-    for (final line in _lines.where((l) => l.isVertical)) {
-      final lineX = widget.yellowBox.left + line.x;
-      if ((position.dx - lineX).abs() < 15) {
-        _selectLine(line);
-        return;
-      }
-    }
-    setState(() => _selectedLine = null);
   }
 
   void _selectLine(_ColumnLine line) {
@@ -1437,6 +1556,7 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
   }
 
   void _addLine() {
+    if (_lines.where((l) => l.isVertical).length >= 5) return;
     final newLine = _ColumnLine(
       id: 'v${DateTime.now().millisecondsSinceEpoch}',
       x: widget.yellowBox.width * 0.5,
@@ -1450,9 +1570,7 @@ class _ColumnEditorScreenState extends State<_ColumnEditorScreen> {
 
   void _deleteSelectedLine() {
     if (_selectedLine == null) return;
-    // Don't allow deleting if less than 2 lines
     if (_lines.where((l) => l.isVertical).length <= 2) return;
-    
     setState(() {
       _lines.removeWhere((l) => l.id == _selectedLine);
       _selectedLine = null;
