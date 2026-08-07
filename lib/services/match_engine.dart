@@ -563,7 +563,7 @@ class MatchEngine {
       if (finalDesc.isEmpty) continue;
       if (_isNonItemText(finalDesc.toLowerCase())) continue;
 
-      final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0);
+      final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0.0);
       items.add(ItemRow(
         quantity: qty,
         description: finalDesc,
