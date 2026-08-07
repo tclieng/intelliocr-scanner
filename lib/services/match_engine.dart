@@ -5,6 +5,29 @@ import '../models/field_roi.dart';
 import '../models/receipt_data.dart';
 import '../services/ocr_service.dart';
 
+/// Numeric cell detected inside an item row: its x-center and parsed value.
+class _Dec {
+  final double x;
+  final double value;
+  _Dec(this.x, this.value);
+}
+
+/// True when [t] consists only of digits, commas, dots and whitespace.
+bool _isPureNumber(String t) => RegExp(r'^[\d.,\s]+$').hasMatch(t.trim());
+
+/// Heuristic: does this line look like a column-header row
+/// (e.g. "ITEM DESCRIPTION  QTY  PRICE  AMOUNT")?
+bool _isHeaderLine(String low) {
+  final headers = [
+    'description', 'qty', 'price', 'amount', 'unit', 'item', 'code', 'hsn', 'part'
+  ];
+  int hits = 0;
+  for (final h in headers) {
+    if (low.contains(h)) hits++;
+  }
+  return hits >= 2;
+}
+
 /// Result of anchor matching on a captured receipt image.
 class AnchorMatchResult {
   final bool matched;
@@ -438,40 +461,12 @@ class MatchEngine {
     double? anchorCY,
   ) async {
     final items = <ItemRow>[];
-    if (cfg.columns.isEmpty) return items;
 
     final mappedYellow = match.mapRoi(cfg.roi);
     final topY = mappedYellow.top;
     final bottomY = anchorCY != null ? anchorCY : mappedYellow.bottom;
     final leftX = mappedYellow.left;
     final rightX = mappedYellow.right;
-    final scaleX = match.scaleX;
-
-    final cols = cfg.sortedColumns;
-    double colLeft(int i) => leftX + cols[i].x * scaleX;
-    double colRight(int i) => leftX + (cols[i].x + cols[i].width) * scaleX;
-
-    // Index of the amount (subtotal) column — rightmost decimal delimiter.
-    int amountIdx = cols.indexWhere((c) => c.name == 'amount');
-    if (amountIdx < 0) amountIdx = cols.length - 1;
-
-    int columnOf(OcrBlock b) {
-      final cx = b.centerX;
-      for (int i = 0; i < cols.length; i++) {
-        if (cx >= colLeft(i) - 4 && cx <= colRight(i) + 4) return i;
-      }
-      int best = 0;
-      double bestD = double.infinity;
-      for (int i = 0; i < cols.length; i++) {
-        final center = (colLeft(i) + colRight(i)) / 2;
-        final d = (cx - center).abs();
-        if (d < bestD) {
-          bestD = d;
-          best = i;
-        }
-      }
-      return best;
-    }
 
     final tol = 8.0;
     final yellowBlocks = blocks.where((b) {
@@ -493,40 +488,64 @@ class MatchEngine {
 
     final rawRows = _groupBlocksIntoRows(yellowBlocks);
 
-    bool rowHasAmount(List<OcrBlock> row) {
-      for (final b in row) {
-        if (columnOf(b) == amountIdx) {
-          if (_extractDecimal(b.text) > 0) return true;
-        }
-      }
-      return false;
-    }
-
+    // ── Column-independent row extraction ──
+    // We no longer rely on a fixed "amount" column (which is fragile when the
+    // YELLOW box has a right margin or amounts fall just inside its edge).
+    // Instead, within each row the RIGHTMOST decimal is the line amount and the
+    // SECOND-rightmost is the unit price. The leftmost non-numeric text is the
+    // description. This naturally handles wrapped names, "price x qty" lines and
+    // barcodes.
     String pendingDesc = '';
     final requireAmount = cfg.detectRowsBySubtotal;
 
     for (final row in rawRows) {
-      final colText = <int, List<String>>{};
+      final decs = <_Dec>[]; // numeric cells in this row: (x, value)
+      final descParts = <String>[];
+      int pqQty = 0;
+      double pqPrice = 0;
+
       for (final b in row) {
-        final ci = columnOf(b);
-        (colText[ci] ??= []).add(b.text.trim());
+        final t = b.text.trim();
+        if (t.isEmpty) continue;
+
+        // "price x qty" pattern, e.g. "2.50x2" or "12.90 X 3"
+        final pq = RegExp(r'(\d[\d.,]*)\s*[xX×]\s*(\d+)').firstMatch(t);
+        if (pq != null) {
+          final p = double.tryParse(pq.group(1)!.replaceAll(',', ''));
+          final q = int.tryParse(pq.group(2)!);
+          if (p != null && p > 0) pqPrice = p;
+          if (q != null && q > 0) pqQty = q;
+          continue;
+        }
+
+        if (_isPureNumber(t)) {
+          // Barcode / SKU (long digit run) — neither description nor amount.
+          if (t.replaceAll(RegExp(r'\D'), '').length >= 8) continue;
+          final v = _extractDecimal(t);
+          if (v > 0) decs.add(_Dec(b.centerX, v));
+          continue;
+        }
+
+        // Plain text → description.
+        descParts.add(t);
       }
 
-      var hasAmount = rowHasAmount(row);
-      if (!requireAmount) hasAmount = true;
+      decs.sort((a, b) => a.x.compareTo(b.x));
+      final amount = decs.isNotEmpty ? decs.last.value : 0.0;
+      final unitPrice = (decs.length >= 2)
+          ? decs[decs.length - 2].value
+          : (pqPrice > 0 ? pqPrice : 0.0);
+      final qty = pqQty > 0 ? pqQty : 1;
 
-      String descText = (colText[0] ?? []).join(' ').trim();
+      final descText = descParts.join(' ').trim();
 
-      if (!hasAmount) {
-        // Description-only continuation (wrapped name or header) — buffer it.
+      if (amount <= 0 && requireAmount) {
+        // No amount on this row → treat as a description continuation (wrapped
+        // name, barcode line, or column header). Buffer it for the next amount.
         final low = descText.toLowerCase();
-        final isHeader = low.contains('item') ||
-            low.contains('qty') ||
-            low.contains('price') ||
-            low.contains('amt') ||
-            low.contains('description') ||
-            low.contains('unit');
-        if (!isHeader && descText.isNotEmpty) {
+        if (descText.isNotEmpty &&
+            !_isNonItemText(low) &&
+            !_isHeaderLine(low)) {
           pendingDesc =
               pendingDesc.isEmpty ? descText : '$pendingDesc $descText';
         }
@@ -534,54 +553,23 @@ class MatchEngine {
       }
 
       // Amount row — merge any buffered leading description lines.
+      var finalDesc = descText;
       if (pendingDesc.isNotEmpty) {
-        descText = descText.isEmpty ? pendingDesc : '$pendingDesc $descText';
+        finalDesc = finalDesc.isEmpty ? pendingDesc : '$pendingDesc $finalDesc';
         pendingDesc = '';
       }
 
-      if (_isNonItemText(descText.toLowerCase())) continue;
+      finalDesc = _cleanItemDescription(finalDesc).trim();
+      if (finalDesc.isEmpty) continue;
+      if (_isNonItemText(finalDesc.toLowerCase())) continue;
 
-      int qty = 1;
-      double unitPrice = 0, discount = 0, amount = 0;
-
-      for (int i = 0; i < cols.length; i++) {
-        final name = cols[i].name;
-        final txt = (colText[i] ?? []).join(' ').trim();
-        if (txt.isEmpty) continue;
-        switch (name) {
-          case 'quantity':
-            final q = _extractInteger(txt);
-            if (q > 0) qty = q;
-            break;
-          case 'unit_price':
-            final v = _extractDecimal(txt);
-            if (v > 0) unitPrice = v;
-            break;
-          case 'discount':
-            final v = _extractDecimal(txt);
-            if (v > 0) discount = v;
-            break;
-          case 'amount':
-            final v = _extractDecimal(txt);
-            if (v > 0) amount = v;
-            break;
-          default:
-            if (name == 'item_description' && descText.isEmpty) {
-              descText = _cleanItemDescription(txt);
-            }
-        }
-      }
-
-      descText = descText.trim();
-      if (descText.isEmpty) continue;
-      if (amount == 0 && unitPrice > 0) amount = unitPrice * qty;
-
+      final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0);
       items.add(ItemRow(
         quantity: qty,
-        description: descText,
+        description: finalDesc,
         unitPrice: unitPrice,
-        discount: discount,
-        amount: amount,
+        discount: 0,
+        amount: amt,
       ));
     }
 
@@ -700,8 +688,8 @@ class MatchEngine {
     if (text.isEmpty) return true;
     final nonItemKeywords = [
       'subtotal', 'total', 'tax', 'gst', 'sst', 'service charge',
-      'payment', 'cash', 'change', 'card', 'visa', 'mastercard',
-      'rounding', 'grand total', 'amount', 'payable', 'balance',
+      'payment', 'cash', 'change', 'card', 'visa', 'mastercard', 'tender', 'paid',
+      'rounding', 'grand total', 'amount', 'payable', 'balance', 'saving', 'points',
       'total item', 'total qty', 'total saving', 'item count',
       'thank you', 'please', 'welcome', 'receipt', 'invoice',
       'copy', 'original', 'return', 'exchange',
