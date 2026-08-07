@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import '../models/receipt_template.dart';
 import '../models/field_roi.dart';
 import '../models/receipt_data.dart';
@@ -478,7 +479,20 @@ class MatchEngine {
           cx <= rightX + tol;
     }).toList();
 
-    if (yellowBlocks.isEmpty) return items;
+    if (yellowBlocks.isEmpty) {
+      debugPrint('[YELLOW] No blocks inside YELLOW box. topY=$topY bottomY=$bottomY leftX=$leftX rightX=$rightX tol=$tol');
+      debugPrint('[YELLOW] Total blocks available: ${blocks.length}');
+      if (blocks.isNotEmpty) {
+        debugPrint('[YELLOW] Sample blocks:');
+        for (int i = 0; i < (blocks.length > 10 ? 10 : blocks.length); i++) {
+          final b = blocks[i];
+          debugPrint('  [$i] "${b.text}" @ (${b.x}, ${b.y}) center=(${b.centerX.toStringAsFixed(1)}, ${b.centerY.toStringAsFixed(1)})');
+        }
+      }
+      return items;
+    }
+
+    debugPrint('[YELLOW] Found ${yellowBlocks.length} blocks inside YELLOW box');
 
     yellowBlocks.sort((a, b) {
       final dy = a.y - b.y;
@@ -487,6 +501,7 @@ class MatchEngine {
     });
 
     final rawRows = _groupBlocksIntoRows(yellowBlocks);
+    debugPrint('[YELLOW] Grouped into ${rawRows.length} rows');
 
     // ── Column-independent row extraction ──
     // We no longer rely on a fixed "amount" column (which is fragile when the
@@ -499,10 +514,13 @@ class MatchEngine {
     final requireAmount = cfg.detectRowsBySubtotal;
 
     for (final row in rawRows) {
+      debugPrint('[YELLOW] Row has ${row.length} blocks: ${row.map((b) => '"${b.text}"').join(', ')}');
       final decs = <_Dec>[]; // numeric cells in this row: (x, value)
       final descParts = <String>[];
       int pqQty = 0;
       double pqPrice = 0;
+
+      debugPrint('[YELLOW] Row has ${row.length} blocks: ${row.map((b) => '"${b.text}"').join(' ')}');
 
       for (final b in row) {
         final t = b.text.trim();
@@ -564,6 +582,7 @@ class MatchEngine {
       if (_isNonItemText(finalDesc.toLowerCase())) continue;
 
       final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0.0);
+      debugPrint('[YELLOW] Adding item: qty=$qty desc="$finalDesc" unitPrice=$unitPrice amount=$amt');
       items.add(ItemRow(
         quantity: qty,
         description: finalDesc,
