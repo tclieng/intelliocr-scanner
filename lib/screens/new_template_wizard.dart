@@ -1051,20 +1051,7 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
       ),
       body: Column(
         children: [
-          // Instructions
-          Container(
-            padding: const EdgeInsets.all(12),
-            color: Colors.orange[50],
-            child: const Text(
-              'Tap a box to select, drag to move. Use handles to resize.\n'
-              'Top→Bottom: RED company, BLUE date, YELLOW items, GREEN total.\n'
-              'Boxes must NOT overlap and stay within the receipt.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13),
-            ),
-          ),
-
-          // Editor
+          // Editor (instructions removed to maximize image area for box positioning)
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -1137,87 +1124,90 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
       top: widgetRect.top - kGrabMargin,
       width: widgetRect.width + kGrabMargin * 2,
       height: widgetRect.height + kGrabMargin * 2,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => _selectBox(id),
-        onPanStart: (_) => _selectBox(id),
-        onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            // Transparent grab ring (keeps hit area large)
-            Positioned.fill(
-              child: IgnorePointer(child: Container(color: Colors.transparent)),
+      child: Stack(
+        clipBehavior: Clip.none, // IMPORTANT: lets handles extend outside the box
+        children: [
+          // Move + select hit area (entire grab ring)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _selectBox(id),
+              onPanStart: (_) => _selectBox(id),
+              onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
             ),
-            // Visible box body — tap to select, drag handled by outer GestureDetector
-            Positioned(
-              left: kGrabMargin,
-              top: kGrabMargin,
-              width: widgetRect.width,
-              height: widgetRect.height,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => _selectBox(id),
-                child: Container(
-                  decoration: BoxDecoration(
-                    border: Border.all(
-                      color: isSelected ? color : color.withOpacity(0.7),
-                      width: isSelected ? 3 : 2,
-                    ),
-                    color: color.withOpacity(isSelected ? 0.20 : 0.15),
+          ),
+          // Visible box body (centered inside grab ring)
+          Positioned(
+            left: kGrabMargin,
+            top: kGrabMargin,
+            width: widgetRect.width,
+            height: widgetRect.height,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _selectBox(id),
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: isSelected ? color : color.withOpacity(0.7),
+                    width: isSelected ? 3 : 2,
                   ),
-                  child: Stack(
-                    clipBehavior: Clip.none,
-                    children: [
-                      // Label
-                      Positioned(
-                        left: 4,
-                        top: 2,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(
-                            color: color,
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Text(
-                            id.toUpperCase(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                            ),
+                  color: color.withOpacity(isSelected ? 0.20 : 0.15),
+                ),
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    // Label
+                    Positioned(
+                      left: 4,
+                      top: 2,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          id.toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
-                      // Resize handles (offset -28 to keep 36x36 visible centered on corner;
-                      // outer 56x56 hit area reaches further out for easy grabbing)
-                      Positioned(
-                        left: -28,
-                        top: -28,
-                        child: _buildHandle(color, 'tl', id, displayedImg),
-                      ),
-                      Positioned(
-                        right: -28,
-                        top: -28,
-                        child: _buildHandle(color, 'tr', id, displayedImg),
-                      ),
-                      Positioned(
-                        left: -28,
-                        bottom: -28,
-                        child: _buildHandle(color, 'bl', id, displayedImg),
-                      ),
-                      Positioned(
-                        right: -28,
-                        bottom: -28,
-                        child: _buildHandle(color, 'br', id, displayedImg),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+          // Resize handles — placed in OUTER Stack so they aren't clipped
+          // by the visible box's Container decoration. Use IgnorePointer on
+          // the move detector so handle hit-testing wins; handles are drawn
+          // last so they appear on top.
+          // Offset (kGrabMargin - 28, kGrabMargin - 28) = (-8, -8) places
+          // the handle's 56×56 box so its center sits exactly on the corner.
+          Positioned(
+            left: -8,
+            top: -8,
+            child: _buildHandle(color, 'tl', id, displayedImg),
+          ),
+          Positioned(
+            right: -8,
+            top: -8,
+            child: _buildHandle(color, 'tr', id, displayedImg),
+          ),
+          Positioned(
+            left: -8,
+            bottom: -8,
+            child: _buildHandle(color, 'bl', id, displayedImg),
+          ),
+          Positioned(
+            right: -8,
+            bottom: -8,
+            child: _buildHandle(color, 'br', id, displayedImg),
+          ),
+        ],
       ),
     );
   }
