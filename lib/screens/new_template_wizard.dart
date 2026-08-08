@@ -1132,9 +1132,9 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque, // opaque so it absorbs body touches
-              onTap: () => _selectBox(id),
-              onPanStart: (_) => _selectBox(id),
-              onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
+              onTap: () { print('[TAP] $id'); _selectBox(id); },
+              onPanStart: (_) { print('[PAN_START] $id'); _selectBox(id); },
+              onPanUpdate: (details) { print('[PAN_UPDATE] $id delta=${details.delta}'); _moveBox(id, details.delta, displayedImg); },
             ),
           ),
           // Visible box body (centered inside grab ring)
@@ -1216,8 +1216,8 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
     // Outer 56x56 transparent hit area for easy grabbing, inner 36x36 visible circle
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onPanStart: (_) => _selectBox(boxId),
-      onPanUpdate: (details) => _resizeBox(boxId, corner, details.delta, displayedImg),
+      onPanStart: (_) { print('[RESIZE_START] $boxId corner=$corner'); _selectBox(boxId); },
+      onPanUpdate: (details) { print('[RESIZE_UPDATE] $boxId corner=$corner delta=${details.delta}'); _resizeBox(boxId, corner, details.delta, displayedImg); },
       child: Container(
         width: 56,
         height: 56,
