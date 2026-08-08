@@ -273,6 +273,7 @@ class MatchEngine {
 
     final blocks = await _getBlocks(capturedFile);
     final rawText = await _ocr.recognizeText(capturedFile);
+    print('[ENGINE] Full-page OCR (${rawText.length} chars): ${rawText.substring(0, rawText.length > 300 ? 300 : rawText.length).replaceAll('\n', ' | ')}');
 
     // Find Anchor C position for item table bottom boundary
     double? anchorCY;
@@ -287,12 +288,16 @@ class MatchEngine {
     }
 
     // Extract configured field ROIs (ROI Fields from template editor)
+    print('[FIELDS] Processing ${template.fields.length} field ROIs');
     for (final field in template.fields) {
       final mappedRoi = result.mapRoi(field.roi);
       final useDual = field.ocrEngine == 'both';
+      print('[FIELDS] Field "${field.fieldName}" roi=${field.roi} mapped=${mappedRoi} dual=$useDual');
       final croppedText = await _extractRoiText(capturedFile, mappedRoi, useDual: useDual);
+      print('[FIELDS] Field "${field.fieldName}" extracted text: "$croppedText"');
       _populateField(data, field.fieldName, croppedText.trim(), blocks);
     }
+    print('[FIELDS] Total blocks from full-page OCR: ${blocks.length}');
 
     // Extract TOTAL from GREEN box (anchorC) if defined — most reliable source
     if (template.anchorC != null && template.anchorC!.roi != ui.Rect.zero) {
@@ -462,6 +467,7 @@ class MatchEngine {
     double? anchorCY,
   ) async {
     final items = <ItemRow>[];
+    print('[YELLOW_EXTRACT] tableRoi=${cfg.tableRoi} columns=${cfg.columns.length} detectRowsBySubtotal=${cfg.detectRowsBySubtotal}');
 
     final mappedYellow = match.mapRoi(cfg.roi);
     final topY = mappedYellow.top;
@@ -480,19 +486,19 @@ class MatchEngine {
     }).toList();
 
     if (yellowBlocks.isEmpty) {
-      debugPrint('[YELLOW] No blocks inside YELLOW box. topY=$topY bottomY=$bottomY leftX=$leftX rightX=$rightX tol=$tol');
-      debugPrint('[YELLOW] Total blocks available: ${blocks.length}');
+      print('[YELLOW] No blocks inside YELLOW box. topY=$topY bottomY=$bottomY leftX=$leftX rightX=$rightX tol=$tol');
+      print('[YELLOW] Total blocks available: ${blocks.length}');
       if (blocks.isNotEmpty) {
-        debugPrint('[YELLOW] Sample blocks:');
+        print('[YELLOW] Sample blocks:');
         for (int i = 0; i < (blocks.length > 10 ? 10 : blocks.length); i++) {
           final b = blocks[i];
-          debugPrint('  [$i] "${b.text}" @ (${b.x}, ${b.y}) center=(${b.centerX.toStringAsFixed(1)}, ${b.centerY.toStringAsFixed(1)})');
+          print('  [$i] "${b.text}" @ (${b.x}, ${b.y}) center=(${b.centerX.toStringAsFixed(1)}, ${b.centerY.toStringAsFixed(1)})');
         }
       }
       return items;
     }
 
-    debugPrint('[YELLOW] Found ${yellowBlocks.length} blocks inside YELLOW box');
+    print('[YELLOW] Found ${yellowBlocks.length} blocks inside YELLOW box');
 
     yellowBlocks.sort((a, b) {
       final dy = a.y - b.y;
@@ -501,7 +507,7 @@ class MatchEngine {
     });
 
     final rawRows = _groupBlocksIntoRows(yellowBlocks);
-    debugPrint('[YELLOW] Grouped into ${rawRows.length} rows');
+    print('[YELLOW] Grouped into ${rawRows.length} rows');
 
     // ── Column-independent row extraction ──
     // We no longer rely on a fixed "amount" column (which is fragile when the
@@ -514,13 +520,13 @@ class MatchEngine {
     final requireAmount = cfg.detectRowsBySubtotal;
 
     for (final row in rawRows) {
-      debugPrint('[YELLOW] Row has ${row.length} blocks: ${row.map((b) => '"${b.text}"').join(', ')}');
+      print('[YELLOW] Row has ${row.length} blocks: ${row.map((b) => '"${b.text}"').join(', ')}');
       final decs = <_Dec>[]; // numeric cells in this row: (x, value)
       final descParts = <String>[];
       int pqQty = 0;
       double pqPrice = 0;
 
-      debugPrint('[YELLOW] Row has ${row.length} blocks: ${row.map((b) => '"${b.text}"').join(' ')}');
+      print('[YELLOW] Row has ${row.length} blocks: ${row.map((b) => '"${b.text}"').join(' ')}');
 
       for (final b in row) {
         final t = b.text.trim();
@@ -582,7 +588,7 @@ class MatchEngine {
       if (_isNonItemText(finalDesc.toLowerCase())) continue;
 
       final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0.0);
-      debugPrint('[YELLOW] Adding item: qty=$qty desc="$finalDesc" unitPrice=$unitPrice amount=$amt');
+      print('[YELLOW] Adding item: qty=$qty desc="$finalDesc" unitPrice=$unitPrice amount=$amt');
       items.add(ItemRow(
         quantity: qty,
         description: finalDesc,
