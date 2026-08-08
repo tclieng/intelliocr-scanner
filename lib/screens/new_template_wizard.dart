@@ -1128,9 +1128,10 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
         clipBehavior: Clip.none, // IMPORTANT: lets handles extend outside the box
         children: [
           // Move + select hit area (entire grab ring)
+          // Use translucent so handles (drawn later in Stack) win the hit-test
           Positioned.fill(
             child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+              behavior: HitTestBehavior.translucent,
               onTap: () => _selectBox(id),
               onPanStart: (_) => _selectBox(id),
               onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
@@ -1143,7 +1144,7 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
             width: widgetRect.width,
             height: widgetRect.height,
             child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+              behavior: HitTestBehavior.translucent,
               onTap: () => _selectBox(id),
               child: Container(
                 decoration: BoxDecoration(
