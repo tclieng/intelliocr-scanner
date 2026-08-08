@@ -1116,9 +1116,6 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
     final widgetRect = _imgToWidget(imgRect, displayedImg);
     final isSelected = _selectedBox == id;
 
-    // DEBUG
-    debugPrint('[DEBUG _buildBox] id=$id imgRect=$imgRect widgetRect=$widgetRect');
-
     // 20px transparent grab margin — big hit area without changing visible box
     const double kGrabMargin = 20;
 
@@ -1137,54 +1134,50 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
               behavior: HitTestBehavior.translucent,
               onTap: () => _selectBox(id),
               onPanStart: (_) => _selectBox(id),
-              onPanUpdate: (details) {
-        debugPrint('[DEBUG MOVE] id=$id delta=${details.delta}');
-        _moveBox(id, details.delta, displayedImg);
-      },
+              onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
             ),
           ),
           // Visible box body (centered inside grab ring)
+          // NO GestureDetector here — the outer grab ring handles tap/pan for
+          // the whole area. Having an inner GestureDetector consumed the touch
+          // before the outer move detector could start a pan gesture.
           Positioned(
             left: kGrabMargin,
             top: kGrabMargin,
             width: widgetRect.width,
             height: widgetRect.height,
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: () => _selectBox(id),
-              child: Container(
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: isSelected ? color : color.withOpacity(0.7),
-                    width: isSelected ? 3 : 2,
-                  ),
-                  color: color.withOpacity(isSelected ? 0.20 : 0.15),
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: isSelected ? color : color.withOpacity(0.7),
+                  width: isSelected ? 3 : 2,
                 ),
-                child: Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    // Label
-                    Positioned(
-                      left: 4,
-                      top: 2,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: color,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          id.toUpperCase(),
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
+                color: color.withOpacity(isSelected ? 0.20 : 0.15),
+              ),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // Label
+                  Positioned(
+                    left: 4,
+                    top: 2,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        id.toUpperCase(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
           ),
