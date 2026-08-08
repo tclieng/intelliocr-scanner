@@ -1116,6 +1116,9 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
     final widgetRect = _imgToWidget(imgRect, displayedImg);
     final isSelected = _selectedBox == id;
 
+    // DEBUG
+    debugPrint('[DEBUG _buildBox] id=$id imgRect=$imgRect widgetRect=$widgetRect');
+
     // 20px transparent grab margin — big hit area without changing visible box
     const double kGrabMargin = 20;
 
@@ -1134,7 +1137,10 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
               behavior: HitTestBehavior.translucent,
               onTap: () => _selectBox(id),
               onPanStart: (_) => _selectBox(id),
-              onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
+              onPanUpdate: (details) {
+        debugPrint('[DEBUG MOVE] id=$id delta=${details.delta}');
+        _moveBox(id, details.delta, displayedImg);
+      },
             ),
           ),
           // Visible box body (centered inside grab ring)
