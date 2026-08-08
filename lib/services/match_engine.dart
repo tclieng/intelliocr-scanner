@@ -467,7 +467,7 @@ class MatchEngine {
     double? anchorCY,
   ) async {
     final items = <ItemRow>[];
-    print('[YELLOW_EXTRACT] tableRoi=${cfg.tableRoi} columns=${cfg.columns.length} detectRowsBySubtotal=${cfg.detectRowsBySubtotal}');
+    print('[YELLOW_EXTRACT] roi=${cfg.roi} columns=${cfg.columns.length} detectRowsBySubtotal=${cfg.detectRowsBySubtotal}');
 
     final mappedYellow = match.mapRoi(cfg.roi);
     final topY = mappedYellow.top;
@@ -520,8 +520,7 @@ class MatchEngine {
     final requireAmount = cfg.detectRowsBySubtotal;
 
     for (final row in rawRows) {
-      print('[YELLOW] Row has ${row.length} blocks: ${row.map((b) => '"${b.text}"').join(', ')}');
-      final decs = <_Dec>[]; // numeric cells in this row: (x, value)
+        final decs = <_Dec>[]; // numeric cells in this row: (x, value)
       final descParts = <String>[];
       int pqQty = 0;
       double pqPrice = 0;
