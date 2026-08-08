@@ -1131,19 +1131,10 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
           // Use translucent so handles (drawn later in Stack) win the hit-test
           Positioned.fill(
             child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: () {
-                debugPrint('[TAP] $id');
-                _selectBox(id);
-              },
-              onPanStart: (_) {
-                debugPrint('[PAN_START] $id');
-                _selectBox(id);
-              },
-              onPanUpdate: (details) {
-                debugPrint('[PAN_UPDATE] $id delta=$details');
-                _moveBox(id, details.delta, displayedImg);
-              },
+              behavior: HitTestBehavior.opaque, // opaque so it absorbs body touches
+              onTap: () => _selectBox(id),
+              onPanStart: (_) => _selectBox(id),
+              onPanUpdate: (details) => _moveBox(id, details.delta, displayedImg),
             ),
           ),
           // Visible box body (centered inside grab ring)
