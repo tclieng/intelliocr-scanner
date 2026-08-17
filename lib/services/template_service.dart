@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:path_provider/path_provider.dart';
 import '../models/receipt_template.dart';
 
@@ -73,6 +74,78 @@ class TemplateService {
           tpl.anchorA!.expectedText.toLowerCase().contains(name)) return tpl;
     }
     return null;
+  }
+
+  /// Find the best-matching template for a receipt by its detected supplier-name
+  /// text (OCR of the receipt header). Uses token overlap + (best-effort)
+  /// Levenshtein similarity against each template's `supplierName` and anchor A
+  /// expected text. Returns the best template if its score meets [threshold].
+  ReceiptTemplate? findBestTemplateByHeader(String headerText,
+      {double threshold = 0.5}) {
+    final text = headerText.toLowerCase();
+    if (text.trim().isEmpty) return null;
+
+    ReceiptTemplate? best;
+    double bestScore = 0;
+    for (final tpl in _templates) {
+      if (!tpl.isComplete) continue;
+      final name = tpl.supplierName.toLowerCase();
+      final anchor = tpl.anchorA?.expectedText.toLowerCase() ?? '';
+      final scoreName = _fuzzyScore(text, name);
+      final scoreAnchor =
+          anchor.isNotEmpty ? _fuzzyScore(text, anchor) : 0.0;
+      final score = scoreName >= scoreAnchor ? scoreName : scoreAnchor;
+      if (score > bestScore) {
+        bestScore = score;
+        best = tpl;
+      }
+    }
+    return bestScore >= threshold ? best : null;
+  }
+
+  /// Combined fuzzy score in [0,1]: substring / containment first, then token
+  /// overlap (normalized by the smaller token set) with partial-token matching.
+  double _fuzzyScore(String text, String target) {
+    if (target.isEmpty || text.isEmpty) return 0;
+    final tt = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    final tg = target.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (tt.isEmpty || tg.isEmpty) return 0;
+    if (tg.contains(tt) || tt.contains(tg)) return 1.0;
+    final ttc = tt.replaceAll(' ', '');
+    final tgc = tg.replaceAll(' ', '');
+    if (tgc.contains(ttc) || ttc.contains(tgc)) return 1.0;
+
+    final textTokens = tt.split(' ').where((t) => t.length >= 2).toSet();
+    final targetTokens = tg.split(' ').where((t) => t.length >= 2).toList();
+    if (textTokens.isEmpty || targetTokens.isEmpty) return 0;
+
+    int overlap = 0;
+    for (final x in textTokens) {
+      final hit = targetTokens.any((y) =>
+          y == x || y.startsWith(x) || x.startsWith(y) || _levenshtein(x, y) <= 1);
+      if (hit) overlap++;
+    }
+    return overlap / min(textTokens.length, targetTokens.length);
+  }
+
+  int _levenshtein(String a, String b) {
+    if (a.isEmpty) return b.length;
+    if (b.isEmpty) return a.length;
+    final matrix =
+        List.generate(a.length + 1, (_) => List.filled(b.length + 1, 0));
+    for (int i = 0; i <= a.length; i++) matrix[i][0] = i;
+    for (int j = 0; j <= b.length; j++) matrix[0][j] = j;
+    for (int i = 1; i <= a.length; i++) {
+      for (int j = 1; j <= b.length; j++) {
+        final cost = a[i - 1] == b[j - 1] ? 0 : 1;
+        matrix[i][j] = [
+          matrix[i - 1][j] + 1,
+          matrix[i][j - 1] + 1,
+          matrix[i - 1][j - 1] + cost
+        ].reduce((a, b) => a < b ? a : b);
+      }
+    }
+    return matrix[a.length][b.length];
   }
 
   /// Get a template by ID.

@@ -45,56 +45,65 @@ class ReceiptData {
   List<dynamic> toExcelRow() {
     return [
       filename,
-      date,
-      time,
       supplier,
       number,
+      date,
       amount,
       currency,
       paymentMethod,
       subtotal,
       tax,
+      time,
       description,
       cashier,
       terminalId,
       membershipNumber,
-      items.map((i) => i.toBriefString()).join('; '),
+      items.length,
     ];
   }
 
+  /// Excel headers per user spec:
+  /// RED → Invoice Number, BLUE → Invoice Date,
+  /// YELLOW → Description/Qty/UOM/Unit Price/Sub Total,
+  /// GREEN → Grand Total, Supplier = matched template name
   static List<String> get excelHeaders => [
         'Filename',
-        'Date',
-        'Time',
         'Supplier',
-        'Receipt No',
-        'Amount (RM)',
+        'Invoice Number',
+        'Invoice Date',
+        'Grand Total (RM)',
         'Currency',
         'Payment Method',
         'Subtotal',
         'Tax',
+        'Time',
         'Description',
         'Cashier',
         'Terminal ID',
         'Membership No',
-        'Items',
+        'Items Count',
       ];
 }
 
 class ItemRow {
   int quantity;
   String description;
+  String uom;
   double unitPrice;
   double discount;
   double amount;
+  double subtotal;
 
   ItemRow({
     this.quantity = 1,
     this.description = '',
+    this.uom = '',
     this.unitPrice = 0.0,
     this.discount = 0.0,
     this.amount = 0.0,
+    this.subtotal = 0.0,
   });
 
-  String toBriefString() => '$description x$quantity RM${amount.toStringAsFixed(2)}';
+  String toBriefString() =>
+      '$description x$quantity${uom.isNotEmpty ? ' $uom' : ''} RM${amount.toStringAsFixed(2)}';
 }

@@ -93,34 +93,47 @@ class _HomeScreenState extends State<HomeScreen> {
         debugPrint('OCR_RAW[${i}]: ${rawText.substring(0, min(200, rawText.length))}...');
         final data = _parseReceiptData(_captures[i].uri.pathSegments.last, rawText);
 
-        // Try template-matched extraction: auto-detect best matching template
-        ReceiptTemplate? bestTemplate;
-        double bestConfidence = 0.0;
-        for (final tpl in _templateService.templates) {
-          if (!tpl.isComplete) continue;
-          try {
-            final test = await _matchEngine.extractWithTemplate(tpl, originalFile, w, h, data.filename);
-            if (test.confidence > bestConfidence && test.confidence > 0.5) {
-              bestConfidence = test.confidence;
-              bestTemplate = tpl;
-            }
-          } catch (_) {}
-        }
-        if (bestTemplate != null) {
+        // ── Supplier-name-based template matching ──
+        // OCR detects the supplier name from the receipt header, then we find
+        // the best-matching template by supplier name (not by anchor text,
+        // which changes per receipt and never matches).
+        final detectedSupplier = data.supplier;
+        ReceiptTemplate? matchedTemplate =
+            _templateService.findBestTemplateByHeader(detectedSupplier,
+                threshold: 0.4);
+
+        if (matchedTemplate != null) {
+          debugPrint('Matched template: ${matchedTemplate.supplierName} (score OK)');
           try {
             final enhanced = await _matchEngine.extractWithTemplate(
-              bestTemplate, originalFile, w, h, data.filename);
+              matchedTemplate,
+              originalFile,
+              w,
+              h,
+              data.filename,
+              supplierMatched: true,
+            );
+            // Overwrite with template-extracted data (more accurate)
             if (enhanced.supplier.isNotEmpty) data.supplier = enhanced.supplier;
-            if (enhanced.amount > 0) data.amount = enhanced.amount;
-            if (enhanced.date.isNotEmpty) data.date = enhanced.date;
             if (enhanced.number.isNotEmpty) data.number = enhanced.number;
-            if (enhanced.paymentMethod.isNotEmpty) data.paymentMethod = enhanced.paymentMethod;
+            if (enhanced.date.isNotEmpty) data.date = enhanced.date;
+            if (enhanced.amount > 0) data.amount = enhanced.amount;
+            if (enhanced.time.isNotEmpty) data.time = enhanced.time;
+            if (enhanced.paymentMethod.isNotEmpty) {
+              data.paymentMethod = enhanced.paymentMethod;
+            }
             if (enhanced.subtotal > 0) data.subtotal = enhanced.subtotal;
             if (enhanced.tax > 0) data.tax = enhanced.tax;
             if (enhanced.items.isNotEmpty) data.items = enhanced.items;
             data.confidence = enhanced.confidence;
             data.isValidated = enhanced.isValidated;
-          } catch (_) {}
+            // Use matched template's supplier name for Excel export
+            data.supplier = matchedTemplate.supplierName;
+          } catch (e) {
+            debugPrint('Template extraction error: $e');
+          }
+        } else {
+          debugPrint('No template matched for supplier: "$detectedSupplier"');
         }
 
         _results.add(data);
@@ -136,6 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _processing = false;
       _processedCount = _results.length;
+      // Use the first result's supplier (which is the matched template name)
       _processedSupplier = _results.isNotEmpty ? _results.first.supplier : '';
       _status = '${_results.length}/${_captures.length} processed';
     });

@@ -133,8 +133,9 @@ class MatchEngine {
     ReceiptTemplate template,
     File capturedFile,
     double capturedWidth,
-    double capturedHeight,
-  ) async {
+    double capturedHeight, {
+    bool supplierMatched = false,
+  }) async {
     final blocks = await _getBlocks(capturedFile);
     if (blocks.isEmpty) return AnchorMatchResult(matched: false);
 
@@ -182,14 +183,16 @@ class MatchEngine {
     scaleX = capturedWidth / tW;
     scaleY = capturedHeight / tH;
 
-    if (matchedA != null && ax != null && ay != null && template.anchorA != null) {
-      final tA = template.anchorA!;
-      offsetX = ax - tA.roi.left * scaleX;
-      offsetY = ay - tA.roi.top * scaleY;
-    } else if (matchedB != null && bx != null && by != null && template.anchorB != null) {
-      final tB = template.anchorB!;
-      offsetX = bx - tB.roi.left * scaleX;
-      offsetY = by - tB.roi.top * scaleY;
+    if (!supplierMatched) {
+      if (matchedA != null && ax != null && ay != null && template.anchorA != null) {
+        final tA = template.anchorA!;
+        offsetX = ax - tA.roi.left * scaleX;
+        offsetY = ay - tA.roi.top * scaleY;
+      } else if (matchedB != null && bx != null && by != null && template.anchorB != null) {
+        final tB = template.anchorB!;
+        offsetX = bx - tB.roi.left * scaleX;
+        offsetY = by - tB.roi.top * scaleY;
+      }
     }
 
     int matchedCount = [matchedA, matchedB, matchedC].where((m) => m != null).length;
@@ -259,12 +262,19 @@ class MatchEngine {
     File capturedFile,
     double capturedWidth,
     double capturedHeight,
-    String filename,
-  ) async {
-    final result = await matchTemplate(template, capturedFile, capturedWidth, capturedHeight);
+    String filename, {
+    bool supplierMatched = false,
+  }) async {
+    final result = await matchTemplate(
+      template,
+      capturedFile,
+      capturedWidth,
+      capturedHeight,
+      supplierMatched: supplierMatched,
+    );
     final data = ReceiptData(filename: filename);
 
-    if (!result.matched) {
+    if (!result.matched && !supplierMatched) {
       data.description = 'Template not matched — low confidence';
       final rawText = await _ocr.recognizeText(capturedFile);
       _fillFromFullOcr(data, rawText);
@@ -288,12 +298,12 @@ class MatchEngine {
     }
 
     // Extract configured field ROIs (ROI Fields from template editor)
+    // Force dual OCR (ML Kit + Tesseract) for all fields to maximize accuracy
     print('[FIELDS] Processing ${template.fields.length} field ROIs');
     for (final field in template.fields) {
       final mappedRoi = result.mapRoi(field.roi);
-      final useDual = field.ocrEngine == 'both';
-      print('[FIELDS] Field "${field.fieldName}" roi=${field.roi} mapped=${mappedRoi} dual=$useDual');
-      final croppedText = await _extractRoiText(capturedFile, mappedRoi, useDual: useDual);
+      print('[FIELDS] Field "${field.fieldName}" roi=${field.roi} mapped=${mappedRoi}');
+      final croppedText = await _extractRoiText(capturedFile, mappedRoi, useDual: true);
       print('[FIELDS] Field "${field.fieldName}" extracted text: "$croppedText"');
       _populateField(data, field.fieldName, croppedText.trim(), blocks);
     }
@@ -305,6 +315,19 @@ class MatchEngine {
       final greenText = await _extractRoiText(capturedFile, greenRoi, useDual: true);
       final gv = _extractDecimal(greenText);
       if (gv > 0) data.amount = gv;
+    }
+
+    // Extract Invoice Number from RED box (anchorA) — per spec RED = Invoice Number
+    if (template.anchorA != null && template.anchorA!.roi != ui.Rect.zero) {
+      final redRoi = result.mapRoi(template.anchorA!.roi);
+      final redText = await _extractRoiText(capturedFile, redRoi, useDual: true);
+      final inv = _extractInvoiceNumber(redText);
+      if (inv.isNotEmpty) {
+        data.number = inv;
+        print('[RED] Invoice number: "$inv" (from "$redText")');
+      } else {
+        print('[RED] No invoice number in RED box text: "$redText"');
+      }
     }
 
     // Extract item rows from YELLOW box (new, column-based, subtotal-delimiter rows)
@@ -372,6 +395,12 @@ class MatchEngine {
         break;
       case 'receipt_number':
         if (data.number.isEmpty) data.number = text;
+        break;
+      case 'invoice_number':
+        if (data.number.isEmpty) {
+          final inv = _extractInvoiceNumber(text);
+          if (inv.isNotEmpty) data.number = inv;
+        }
         break;
       case 'cashier':
         data.cashier = text;
@@ -486,7 +515,8 @@ class MatchEngine {
     }).toList();
 
     if (yellowBlocks.isEmpty) {
-      print('[YELLOW] No blocks inside YELLOW box. topY=$topY bottomY=$bottomY leftX=$leftX rightX=$rightX tol=$tol');
+      print('[YELLOW] No blocks inside YELLOW box from full-page OCR. Trying dual OCR on YELLOW ROI...');
+      print('[YELLOW] Box: topY=$topY bottomY=$bottomY leftX=$leftX rightX=$rightX tol=$tol');
       print('[YELLOW] Total blocks available: ${blocks.length}');
       if (blocks.isNotEmpty) {
         print('[YELLOW] Sample blocks:');
@@ -495,7 +525,34 @@ class MatchEngine {
           print('  [$i] "${b.text}" @ (${b.x}, ${b.y}) center=(${b.centerX.toStringAsFixed(1)}, ${b.centerY.toStringAsFixed(1)})');
         }
       }
-      return items;
+      // Fallback: dual OCR directly on YELLOW ROI, then parse lines
+      final yellowRect = ui.Rect.fromLTRB(leftX, topY, rightX, bottomY);
+      final yellowText = await _extractRoiText(capturedFile, yellowRect, useDual: true);
+      print('[YELLOW] Dual OCR on YELLOW ROI: "${yellowText.substring(0, yellowText.length > 500 ? 500 : yellowText.length).replaceAll('\n', ' | ')}"');
+      if (yellowText.trim().isNotEmpty) {
+        // Parse the OCR text into pseudo-blocks (one per line)
+        final lines = yellowText.split('\n').where((l) => l.trim().isNotEmpty).toList();
+        final pseudoBlocks = <OcrBlock>[];
+        double lineY = topY;
+        for (final line in lines) {
+          pseudoBlocks.add(OcrBlock(
+            text: line.trim(),
+            x: leftX,
+            y: lineY,
+            width: rightX - leftX,
+            height: 20,
+          ));
+          lineY += 25;
+        }
+        if (pseudoBlocks.isNotEmpty) {
+          final pseudoRows = _groupBlocksIntoRows(pseudoBlocks);
+          print('[YELLOW] Parsed ${pseudoBlocks.length} blocks into ${pseudoRows.length} rows from dual OCR');
+          // Process these rows using the same logic below
+          // (fall through to main extraction with pseudoBlocks as yellowBlocks)
+          yellowBlocks.addAll(pseudoBlocks);
+        }
+      }
+      if (yellowBlocks.isEmpty) return items;
     }
 
     print('[YELLOW] Found ${yellowBlocks.length} blocks inside YELLOW box');
@@ -587,13 +644,29 @@ class MatchEngine {
       if (_isNonItemText(finalDesc.toLowerCase())) continue;
 
       final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0.0);
-      print('[YELLOW] Adding item: qty=$qty desc="$finalDesc" unitPrice=$unitPrice amount=$amt');
+
+      // Best-effort UOM detection from row text (KG, L, PCS, ...)
+      String uom = '';
+      final uomRe = RegExp(
+          r'\b(KG|KGM|G|GM|GR|GMS|L|LT|ML|LTR|PCS|PC|EA|EACH|UNIT|SET|PKT|PACKET|BTL|BOTTLE|CAN|BOX|DOZ|DRM|ROLL|SLICE|SQFT|M|CM|MM)\b',
+          caseSensitive: false);
+      for (final b in row) {
+        final um = uomRe.firstMatch(b.text.trim());
+        if (um != null) {
+          uom = um.group(1)!.toUpperCase();
+          break;
+        }
+      }
+
+      print('[YELLOW] Adding item: qty=$qty desc="$finalDesc" uom="$uom" unitPrice=$unitPrice amount=$amt');
       items.add(ItemRow(
         quantity: qty,
         description: finalDesc,
+        uom: uom,
         unitPrice: unitPrice,
         discount: 0,
         amount: amt,
+        subtotal: amt,
       ));
     }
 
@@ -891,6 +964,22 @@ class MatchEngine {
   }
 
   // ── Decimal extraction (supports RM, comma separators, Malaysian format) ──
+
+  /// Extract an invoice/receipt number from RED-box text.
+  /// Handles "INV-12345", "Receipt No: AB123", "PV26-001", or any standalone
+  /// alphanumeric code of length >= 4 (to avoid capturing stray words).
+  String _extractInvoiceNumber(String text) {
+    final t = text.trim();
+    if (t.isEmpty) return '';
+    final m = RegExp(
+            r'(?:invoice|receipt|inv|no|pv|ref|doc|bill)[#\s:/-]*([A-Za-z0-9][A-Za-z0-9\-/]{3,})',
+            caseSensitive: false)
+        .firstMatch(t);
+    if (m != null) return m.group(1)!.trim();
+    final m2 = RegExp(r'\b([A-Za-z0-9][A-Za-z0-9\-/]{3,})\b').firstMatch(t);
+    if (m2 != null) return m2.group(1)!.trim();
+    return '';
+  }
 
   double _extractDecimal(String text) {
     // Pattern 1: RM followed by optional spaces and number (with optional comma separators)

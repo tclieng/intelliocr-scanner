@@ -14,6 +14,10 @@ class ExcelService {
   Future<String> createExcel(
       List<ReceiptData> receipts, String supplierName) async {
     final excel = Excel.createExcel();
+    // Remove default empty sheet
+    if (excel.sheets.containsKey('Sheet1')) {
+      excel.delete('Sheet1');
+    }
     final sheet = excel['Receipts'];
 
     // Set column widths
@@ -56,15 +60,16 @@ class ExcelService {
       }
     }
 
-    // Item rows (individual items from the item table)
+    // Item rows — columns per user spec:
+    // Description / Quantity / UOM / Unit Price / Sub Total
     final itemSheet = excel['Items'];
     final itemHeaders = [
       'Receipt File',
-      'Qty',
       'Description',
+      'Quantity',
+      'UOM',
       'Unit Price',
-      'Discount',
-      'Amount',
+      'Sub Total',
     ];
     final itemHeaderStyle = CellStyle(
       backgroundColorHex: ExcelColor.fromHexString('#FF6B35'),
@@ -84,29 +89,30 @@ class ExcelService {
     int itemRow = 1;
     for (final receipt in receipts) {
       for (final item in receipt.items) {
-        final itemCells = itemSheet.cell(
-            CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: itemRow));
-        itemCells.value = TextCellValue(receipt.filename);
-
+        // Receipt File
+        itemSheet
+            .cell(CellIndex.indexByColumnRow(columnIndex: 0, rowIndex: itemRow))
+            .value = TextCellValue(receipt.filename);
+        // Description
         itemSheet
             .cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: itemRow))
-            .value = IntCellValue(item.quantity);
-
+            .value = TextCellValue(item.description);
+        // Quantity
         itemSheet
             .cell(CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: itemRow))
-            .value = TextCellValue(item.description);
-
+            .value = IntCellValue(item.quantity);
+        // UOM
         itemSheet
             .cell(CellIndex.indexByColumnRow(columnIndex: 3, rowIndex: itemRow))
-            .value = DoubleCellValue(item.unitPrice);
-
+            .value = TextCellValue(item.uom.isNotEmpty ? item.uom : '');
+        // Unit Price
         itemSheet
             .cell(CellIndex.indexByColumnRow(columnIndex: 4, rowIndex: itemRow))
-            .value = DoubleCellValue(item.discount);
-
+            .value = DoubleCellValue(item.unitPrice);
+        // Sub Total (per-item amount)
         itemSheet
             .cell(CellIndex.indexByColumnRow(columnIndex: 5, rowIndex: itemRow))
-            .value = DoubleCellValue(item.amount);
+            .value = DoubleCellValue(item.subtotal > 0 ? item.subtotal : item.amount);
 
         itemRow++;
       }
