@@ -682,7 +682,7 @@ class MatchEngine {
       final uomRe = RegExp(
           r'\b(KG|KGM|G|GM|GR|GMS|L|LT|ML|LTR|PCS|PC|EA|EACH|UNIT|SET|PKT|PACKET|BTL|BOTTLE|CAN|BOX|DOZ|DRM|ROLL|SLICE|SQFT|M|CM|MM)\b',
           caseSensitive: false);
-      for (final b in row) {
+      for (final b in subRow) {
         final um = uomRe.firstMatch(b.text.trim());
         if (um != null) {
           uom = um.group(1)!.toUpperCase();
@@ -700,7 +700,8 @@ class MatchEngine {
         amount: amt,
         subtotal: amt,
       ));
-    }
+    } // end for subRow
+    } // end for rawRows
 
     return items;
   }
