@@ -466,9 +466,11 @@ class MatchEngine {
   String _cleanItemDescription(String text) {
     // Remove trailing numbers (prices, quantities) from description
     var cleaned = text
-        .replaceAll(RegExp(r'\s*\d+[xX×]\s*$'), '') // e.g. "2x"
+        .replaceAll(RegExp(r'\s*\d[\d.,]*\s*[xX×]\s*\d+\s*'), ' ') // e.g. "32.50*1" anywhere
+        .replaceAll(RegExp(r'\s*\d+[xX×]\s*$'), '') // e.g. "2x" at end
         .replaceAll(RegExp(r'\s*[\d,]+\.\d{2}\s*$'), '') // e.g. " 12.50"
         .replaceAll(RegExp(r'\s*RM\s*[\d,]+\.?\d*\s*$', caseSensitive: false), '') // " RM 12.50"
+        .replaceAll(RegExp(r'\s+/\s*[\d.,]+'), '') // e.g. "/ 10.49" trailing amount
         .trim();
     // If the whole thing is just a number, return empty
     if (RegExp(r'^[\d\s,.]+$').hasMatch(cleaned)) return '';
@@ -577,76 +579,106 @@ class MatchEngine {
     final requireAmount = cfg.detectRowsBySubtotal;
 
     for (final row in rawRows) {
+      // Collect all blocks in this row, sorted left-to-right
+      final sortedRow = List<OcrBlock>.from(row)..sort((a, b) => a.x.compareTo(b.x));
+      
+      // First pass: identify all price*qty patterns and split row into sub-items
+      // if multiple price*qty patterns are found (indicates merged item lines).
+      final pqIndices = <int>[];
+      for (int bi = 0; bi < sortedRow.length; bi++) {
+        final t = sortedRow[bi].text.trim();
+        if (RegExp(r'\d[\d.,]*\s*[xX×]\s*\d+').hasMatch(t)) {
+          pqIndices.add(bi);
+        }
+      }
+      
+      // If multiple price*qty patterns found, split into sub-rows
+      final subRows = <List<OcrBlock>>[];
+      if (pqIndices.length >= 2) {
+        print('[YELLOW] Row has ${pqIndices.length} price*qty patterns — splitting into sub-items');
+        int startIdx = 0;
+        for (int si = 0; si < pqIndices.length; si++) {
+          // Sub-row: from startIdx to the next price*qty block (inclusive)
+          // plus any blocks until the next price*qty or end
+          int endIdx = (si < pqIndices.length - 1) ? pqIndices[si + 1] : sortedRow.length;
+          subRows.add(sortedRow.sublist(startIdx, endIdx));
+          startIdx = endIdx;
+        }
+      } else {
+        subRows.add(sortedRow);
+      }
+      
+      for (final subRow in subRows) {
         final decs = <_Dec>[]; // numeric cells in this row: (x, value)
-      final descParts = <String>[];
-      int pqQty = 0;
-      double pqPrice = 0;
+        final descParts = <String>[];
+        int pqQty = 0;
+        double pqPrice = 0;
 
-      print('[YELLOW] Row has ${row.length} blocks: ${row.map((b) => '"${b.text}"').join(' ')}');
+        print('[YELLOW] Sub-row has ${subRow.length} blocks: ${subRow.map((b) => '"${b.text}"').join(' ')}');
 
-      for (final b in row) {
-        final t = b.text.trim();
-        if (t.isEmpty) continue;
+        for (final b in subRow) {
+          final t = b.text.trim();
+          if (t.isEmpty) continue;
 
-        // "price x qty" pattern, e.g. "2.50x2" or "12.90 X 3"
-        final pq = RegExp(r'(\d[\d.,]*)\s*[xX×]\s*(\d+)').firstMatch(t);
-        if (pq != null) {
-          final p = double.tryParse(pq.group(1)!.replaceAll(',', ''));
-          final q = int.tryParse(pq.group(2)!);
-          if (p != null && p > 0) pqPrice = p;
-          if (q != null && q > 0) pqQty = q;
+          // "price x qty" pattern, e.g. "2.50x2" or "12.90 X 3"
+          final pq = RegExp(r'(\d[\d.,]*)\s*[xX×]\s*(\d+)').firstMatch(t);
+          if (pq != null) {
+            final p = double.tryParse(pq.group(1)!.replaceAll(',', ''));
+            final q = int.tryParse(pq.group(2)!);
+            if (p != null && p > 0) pqPrice = p;
+            if (q != null && q > 0) pqQty = q;
+            continue;
+          }
+
+          if (_isPureNumber(t)) {
+            // Barcode / SKU (long digit run) — neither description nor amount.
+            if (t.replaceAll(RegExp(r'\D'), '').length >= 8) continue;
+            final v = _extractDecimal(t);
+            if (v > 0) decs.add(_Dec(b.centerX, v));
+            continue;
+          }
+
+          // Plain text → description.
+          descParts.add(t);
+        }
+
+        decs.sort((a, b) => a.x.compareTo(b.x));
+        final amount = decs.isNotEmpty ? decs.last.value : 0.0;
+        final unitPrice = (decs.length >= 2)
+            ? decs[decs.length - 2].value
+            : (pqPrice > 0 ? pqPrice : 0.0);
+        final qty = pqQty > 0 ? pqQty : 1;
+
+        final descText = descParts.join(' ').trim();
+
+        if (amount <= 0 && requireAmount) {
+          // No amount on this row → treat as a description continuation (wrapped
+          // name, barcode line, or column header). Buffer it for the next amount.
+          final low = descText.toLowerCase();
+          if (descText.isNotEmpty &&
+              !_isNonItemText(low) &&
+              !_isHeaderLine(low)) {
+            pendingDesc =
+                pendingDesc.isEmpty ? descText : '$pendingDesc $descText';
+          }
           continue;
         }
 
-        if (_isPureNumber(t)) {
-          // Barcode / SKU (long digit run) — neither description nor amount.
-          if (t.replaceAll(RegExp(r'\D'), '').length >= 8) continue;
-          final v = _extractDecimal(t);
-          if (v > 0) decs.add(_Dec(b.centerX, v));
-          continue;
+        // Amount row — merge any buffered leading description lines.
+        var finalDesc = descText;
+        if (pendingDesc.isNotEmpty) {
+          finalDesc = finalDesc.isEmpty ? pendingDesc : '$pendingDesc $finalDesc';
+          pendingDesc = '';
         }
 
-        // Plain text → description.
-        descParts.add(t);
-      }
+        finalDesc = _cleanItemDescription(finalDesc).trim();
+        if (finalDesc.isEmpty) continue;
+        if (_isNonItemText(finalDesc.toLowerCase())) continue;
 
-      decs.sort((a, b) => a.x.compareTo(b.x));
-      final amount = decs.isNotEmpty ? decs.last.value : 0.0;
-      final unitPrice = (decs.length >= 2)
-          ? decs[decs.length - 2].value
-          : (pqPrice > 0 ? pqPrice : 0.0);
-      final qty = pqQty > 0 ? pqQty : 1;
+        final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0.0);
 
-      final descText = descParts.join(' ').trim();
-
-      if (amount <= 0 && requireAmount) {
-        // No amount on this row → treat as a description continuation (wrapped
-        // name, barcode line, or column header). Buffer it for the next amount.
-        final low = descText.toLowerCase();
-        if (descText.isNotEmpty &&
-            !_isNonItemText(low) &&
-            !_isHeaderLine(low)) {
-          pendingDesc =
-              pendingDesc.isEmpty ? descText : '$pendingDesc $descText';
-        }
-        continue;
-      }
-
-      // Amount row — merge any buffered leading description lines.
-      var finalDesc = descText;
-      if (pendingDesc.isNotEmpty) {
-        finalDesc = finalDesc.isEmpty ? pendingDesc : '$pendingDesc $finalDesc';
-        pendingDesc = '';
-      }
-
-      finalDesc = _cleanItemDescription(finalDesc).trim();
-      if (finalDesc.isEmpty) continue;
-      if (_isNonItemText(finalDesc.toLowerCase())) continue;
-
-      final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0.0);
-
-      // Best-effort UOM detection from row text (KG, L, PCS, ...)
-      String uom = '';
+        // Best-effort UOM detection from row text (KG, L, PCS, ...)
+        String uom = '';
       final uomRe = RegExp(
           r'\b(KG|KGM|G|GM|GR|GMS|L|LT|ML|LTR|PCS|PC|EA|EACH|UNIT|SET|PKT|PACKET|BTL|BOTTLE|CAN|BOX|DOZ|DRM|ROLL|SLICE|SQFT|M|CM|MM)\b',
           caseSensitive: false);
@@ -813,7 +845,10 @@ class MatchEngine {
       final lastBlock = currentRow.last;
       // Use adaptive threshold: 8% of average block height in the row
       final avgHeight = currentRow.fold<double>(0, (sum, b) => sum + b.height) / currentRow.length;
-      final threshold = avgHeight * 0.8 + 8; // At least 8px gap
+      // Tighter threshold to avoid merging adjacent item lines on dense receipts.
+      // Old: avgHeight * 0.8 + 8 (too aggressive, merged separate items)
+      // New: avgHeight * 0.5 + 4 (still tolerant of minor Y jitter within a line)
+      final threshold = avgHeight * 0.5 + 4;
 
       if ((block.y - lastBlock.y).abs() <= threshold) {
         currentRow.add(block);
@@ -1006,12 +1041,33 @@ class MatchEngine {
       if (parsed != null && parsed > 0) return parsed;
     }
 
+    // Pattern 3b: Space or dot used as decimal separator on thermal receipts
+    // e.g. "372 45" → 372.45, "372.4 5" → 372.45
+    m = RegExp(r'\b(\d{1,6})[\s.](\d{2})\b').firstMatch(text);
+    if (m != null) {
+      final combined = '${m.group(1)}.${m.group(2)}';
+      final parsed = double.tryParse(combined);
+      if (parsed != null && parsed > 0) return parsed;
+    }
+
     // Pattern 4: Number with comma separator and optional decimal
     // e.g. "1,234" → treat as integer
     m = RegExp(r'\b([\d,]+)\b').firstMatch(text);
     if (m != null) {
-      final parsed = double.tryParse(m.group(1)!.replaceAll(',', ''));
-      if (parsed != null && parsed > 0) return parsed;
+      var raw = m.group(1)!.replaceAll(',', '');
+      final parsed = double.tryParse(raw);
+      if (parsed != null && parsed > 0) {
+        // Heuristic: if the number has no decimal point and is >= 1000,
+        // it may be a missing-decimal amount (e.g. "37245" → 372.45).
+        // Only apply this for likely currency amounts (3+ digits).
+        if (!raw.contains('.') && raw.length >= 4) {
+          final withDecimal = double.tryParse('${raw.substring(0, raw.length - 2)}.${raw.substring(raw.length - 2)}');
+          if (withDecimal != null && withDecimal > 0 && withDecimal < 100000) {
+            return withDecimal;
+          }
+        }
+        return parsed;
+      }
     }
 
     return 0;
