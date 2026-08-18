@@ -527,7 +527,7 @@ class MatchEngine {
       }
       // Fallback: dual OCR directly on YELLOW ROI, then parse lines
       final yellowRect = ui.Rect.fromLTRB(leftX, topY, rightX, bottomY);
-      final yellowText = await _extractRoiText(capturedFile, yellowRect, useDual: true);
+      final yellowText = await _extractRoiText(imageFile, yellowRect, useDual: true);
       print('[YELLOW] Dual OCR on YELLOW ROI: "${yellowText.substring(0, yellowText.length > 500 ? 500 : yellowText.length).replaceAll('\n', ' | ')}"');
       if (yellowText.trim().isNotEmpty) {
         // Parse the OCR text into pseudo-blocks (one per line)
