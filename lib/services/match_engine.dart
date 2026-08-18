@@ -313,7 +313,9 @@ class MatchEngine {
     if (template.anchorC != null && template.anchorC!.roi != ui.Rect.zero) {
       final greenRoi = result.mapRoi(template.anchorC!.roi);
       final greenText = await _extractRoiText(capturedFile, greenRoi, useDual: true);
-      final gv = _extractDecimal(greenText);
+      print('[GREEN] Raw OCR: "$greenText"');
+      final gv = _extractDecimal(greenText, isGrandTotal: true);
+      print('[GREEN] Parsed amount: $gv');
       if (gv > 0) data.amount = gv;
     }
 
@@ -584,10 +586,12 @@ class MatchEngine {
       
       // First pass: identify all price*qty patterns and split row into sub-items
       // if multiple price*qty patterns are found (indicates merged item lines).
+      // Handle OCR confusion: O→0, l→1, I→1, S→5, and negative prices (discounts)
+      final pqPattern = RegExp(r'-?\d[\d.,OolI]*\s*[xX×*]\s*\d+');
       final pqIndices = <int>[];
       for (int bi = 0; bi < sortedRow.length; bi++) {
         final t = sortedRow[bi].text.trim();
-        if (RegExp(r'\d[\d.,]*\s*[xX×]\s*\d+').hasMatch(t)) {
+        if (pqPattern.hasMatch(t)) {
           pqIndices.add(bi);
         }
       }
@@ -620,10 +624,12 @@ class MatchEngine {
           final t = b.text.trim();
           if (t.isEmpty) continue;
 
-          // "price x qty" pattern, e.g. "2.50x2" or "12.90 X 3"
-          final pq = RegExp(r'(\d[\d.,]*)\s*[xX×]\s*(\d+)').firstMatch(t);
+          // "price x qty" pattern, e.g. "2.50x2" or "12.90 X 3" or "0.20*1"
+          // Handle OCR confusion: O→0, l→1, I→1, and negative prices (discounts)
+          final pq = RegExp(r'(-?\d[\d.,OolI]*)\s*[xX×*]\s*(\d+)').firstMatch(t);
           if (pq != null) {
-            final p = double.tryParse(pq.group(1)!.replaceAll(',', ''));
+            final pStr = pq.group(1)!.replaceAll(',', '').replaceAll('O', '0').replaceAll('o', '0').replaceAll('l', '1').replaceAll('I', '1');
+            final p = double.tryParse(pStr);
             final q = int.tryParse(pq.group(2)!);
             if (p != null && p > 0) pqPrice = p;
             if (q != null && q > 0) pqQty = q;
@@ -869,10 +875,28 @@ class MatchEngine {
     final lines = rawText.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
 
     // ── Date ──
-    if (data.date.isEmpty) {
+    // Validate existing date: must be DD/MM/YYYY or similar with valid ranges
+    bool isValidDate(String d) {
+      final m = RegExp(r'^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$').firstMatch(d);
+      if (m == null) return false;
+      final dd = int.tryParse(m.group(1)!);
+      final mm = int.tryParse(m.group(2)!);
+      if (dd == null || mm == null) return false;
+      return dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12;
+    }
+
+    if (data.date.isEmpty || !isValidDate(data.date)) {
+      // Clear invalid date and try full OCR
+      data.date = '';
       for (final line in lines) {
         final m = RegExp(r'(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})').firstMatch(line);
-        if (m != null) { data.date = m.group(1)!; break; }
+        if (m != null) {
+          final candidate = m.group(1)!;
+          if (isValidDate(candidate)) {
+            data.date = candidate;
+            break;
+          }
+        }
       }
     }
 
@@ -917,7 +941,9 @@ class MatchEngine {
     }
 
     // ── TOTAL amount (Priority strategy) ──
-    if (data.amount == 0) {
+    if (data.amount == 0 || (data.subtotal > 0 && data.amount > 0 && data.amount < data.subtotal * 0.1)) {
+      // GREEN box returned implausibly small amount — try full OCR fallback
+      print('[TOTAL] Green box amount=${data.amount} subtotal=${data.subtotal} — trying full OCR fallback');
       _extractTotalFromFullOcr(data, lines, rawText);
     }
 
@@ -957,7 +983,7 @@ class MatchEngine {
       // Must be a "TOTAL" labeled line (not "Total Item", "Total Qty")
       if (lower.contains('total') && !lower.contains('item') && !lower.contains('qty') &&
           !lower.contains('saving') && !lower.contains('discount')) {
-        final v = _extractDecimal(line);
+        final v = _extractDecimal(line, isGrandTotal: true);
         if (v > 1.0) { data.amount = v; return; }
       }
     }
@@ -967,7 +993,7 @@ class MatchEngine {
       final lower = line.toLowerCase();
       if (lower.contains('grand') || lower.contains('amount') ||
           (lower.contains('total') && lower.contains('payable'))) {
-        final v = _extractDecimal(line);
+        final v = _extractDecimal(line, isGrandTotal: true);
         if (v > 1.0) { data.amount = v; return; }
       }
     }
@@ -984,7 +1010,7 @@ class MatchEngine {
       // Skip lines with item counts or quantities
       if (RegExp(r'\d+\s*[xX×]\s*\d+').hasMatch(line)) continue;
 
-      final v = _extractDecimal(line);
+      final v = _extractDecimal(line, isGrandTotal: true);
       if (v > 1.0 && v < 100000 && v > best) best = v;
     }
 
@@ -994,7 +1020,7 @@ class MatchEngine {
     for (final line in allLines.reversed) {
       final lower = line.toLowerCase();
       if (lower.contains('cash') || lower.contains('change')) continue;
-      final v = _extractDecimal(line);
+      final v = _extractDecimal(line, isGrandTotal: true);
       if (v > 1.0 && v < 100000) { data.amount = v; return; }
     }
   }
@@ -1017,7 +1043,7 @@ class MatchEngine {
     return '';
   }
 
-  double _extractDecimal(String text) {
+  double _extractDecimal(String text, {bool isGrandTotal = false}) {
     // Pattern 1: RM followed by optional spaces and number (with optional comma separators)
     // e.g. "RM 372.45", "RM372.45", "RM 1,234.56"
     var m = RegExp(r'RM\s*([\d,]+\.?\d{0,2})', caseSensitive: false).firstMatch(text);
@@ -1042,26 +1068,17 @@ class MatchEngine {
       if (parsed != null && parsed > 0) return parsed;
     }
 
-    // Pattern 3b: Space or dot used as decimal separator on thermal receipts
-    // e.g. "372 45" → 372.45, "372.4 5" → 372.45
-    m = RegExp(r'\b(\d{1,6})[\s.](\d{2})\b').firstMatch(text);
-    if (m != null) {
-      final combined = '${m.group(1)}.${m.group(2)}';
-      final parsed = double.tryParse(combined);
-      if (parsed != null && parsed > 0) return parsed;
-    }
-
-    // Pattern 4: Number with comma separator and optional decimal
-    // e.g. "1,234" → treat as integer
+    // Pattern 4: Plain integer (no decimal point)
+    // Only apply missing-decimal heuristic for grand total context
     m = RegExp(r'\b([\d,]+)\b').firstMatch(text);
     if (m != null) {
       var raw = m.group(1)!.replaceAll(',', '');
       final parsed = double.tryParse(raw);
       if (parsed != null && parsed > 0) {
-        // Heuristic: if the number has no decimal point and is >= 1000,
-        // it may be a missing-decimal amount (e.g. "37245" → 372.45).
-        // Only apply this for likely currency amounts (3+ digits).
-        if (!raw.contains('.') && raw.length >= 4) {
+        // Only for grand total: if number has no decimal and is 4-6 digits,
+        // try inserting decimal 2 from right (e.g. "37245" → "372.45")
+        // Skip barcodes (7+ digits) and very large numbers
+        if (isGrandTotal && !raw.contains('.') && raw.length >= 4 && raw.length <= 6) {
           final withDecimal = double.tryParse('${raw.substring(0, raw.length - 2)}.${raw.substring(raw.length - 2)}');
           if (withDecimal != null && withDecimal > 0 && withDecimal < 100000) {
             return withDecimal;
