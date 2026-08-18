@@ -388,8 +388,17 @@ class MatchEngine {
         if (data.supplier.isEmpty) data.supplier = text;
         break;
       case 'date':
-        final m = RegExp(r'(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})').firstMatch(text);
-        if (m != null) data.date = m.group(1)!;
+        final dateMatch = RegExp(r'(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})').firstMatch(text);
+        if (dateMatch != null) {
+          final candidate = dateMatch.group(1)!;
+          // Validate: year must be 20-30 (2-digit) or 2020-2030 (4-digit)
+          final parts = RegExp(r'^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$').firstMatch(candidate);
+          if (parts != null) {
+            final yy = int.tryParse(parts.group(3)!) ?? 0;
+            final validYear = yy < 100 ? (yy >= 20 && yy <= 30) : (yy >= 2020 && yy <= 2030);
+            if (validYear) data.date = candidate;
+          }
+        }
         break;
       case 'time':
         final m = RegExp(r'(\d{1,2}:\d{2}(:\d{2})?)').firstMatch(text);
@@ -468,11 +477,13 @@ class MatchEngine {
   String _cleanItemDescription(String text) {
     // Remove trailing numbers (prices, quantities) from description
     var cleaned = text
-        .replaceAll(RegExp(r'\s*\d[\d.,]*\s*[xX×]\s*\d+\s*'), ' ') // e.g. "32.50*1" anywhere
-        .replaceAll(RegExp(r'\s*\d+[xX×]\s*$'), '') // e.g. "2x" at end
+        .replaceAll(RegExp(r'\s*\d[\d.,]*\s*[xX×*]\s*\d+\s*'), ' ') // e.g. "32.50*1" anywhere
+        .replaceAll(RegExp(r'\s*\d+[xX×*]\s*$'), '') // e.g. "2x" at end
         .replaceAll(RegExp(r'\s*[\d,]+\.\d{2}\s*$'), '') // e.g. " 12.50"
         .replaceAll(RegExp(r'\s*RM\s*[\d,]+\.?\d*\s*$', caseSensitive: false), '') // " RM 12.50"
         .replaceAll(RegExp(r'\s+/\s*[\d.,]+'), '') // e.g. "/ 10.49" trailing amount
+        .replaceAll(RegExp(r'\b\d{8,}\b'), '') // Remove barcodes (8+ consecutive digits)
+        .replaceAll(RegExp(r'\s{2,}'), ' ') // Collapse multiple spaces
         .trim();
     // If the whole thing is just a number, return empty
     if (RegExp(r'^[\d\s,.]+$').hasMatch(cleaned)) return '';
@@ -638,7 +649,10 @@ class MatchEngine {
 
           if (_isPureNumber(t)) {
             // Barcode / SKU (long digit run) — neither description nor amount.
-            if (t.replaceAll(RegExp(r'\D'), '').length >= 8) continue;
+            // In YELLOW box context, real prices always have decimal points or
+            // are in price*qty format. Pure integers are barcode fragments.
+            final digitCount = t.replaceAll(RegExp(r'\D'), '').length;
+            if (digitCount >= 5) continue; // Skip barcodes (5+ digits, no decimal)
             final v = _extractDecimal(t);
             if (v > 0) decs.add(_Dec(b.centerX, v));
             continue;
@@ -649,11 +663,21 @@ class MatchEngine {
         }
 
         decs.sort((a, b) => a.x.compareTo(b.x));
-        final amount = decs.isNotEmpty ? decs.last.value : 0.0;
-        final unitPrice = (decs.length >= 2)
-            ? decs[decs.length - 2].value
-            : (pqPrice > 0 ? pqPrice : 0.0);
-        final qty = pqQty > 0 ? pqQty : 1;
+        // Priority: if we found price*qty pattern, that's the most reliable source
+        // for both unit price and amount. Only use decs (standalone decimal numbers)
+        // when price*qty wasn't found.
+        final double amount;
+        final double unitPrice;
+        final int qty = pqQty > 0 ? pqQty : 1;
+        if (pqPrice > 0) {
+          unitPrice = pqPrice;
+          amount = pqPrice * qty;
+        } else {
+          amount = decs.isNotEmpty ? decs.last.value : 0.0;
+          unitPrice = (decs.length >= 2)
+              ? decs[decs.length - 2].value
+              : 0.0;
+        }
 
         final descText = descParts.join(' ').trim();
 
@@ -876,13 +900,23 @@ class MatchEngine {
 
     // ── Date ──
     // Validate existing date: must be DD/MM/YYYY or similar with valid ranges
+    // Reject prices like "1/10.49" that happen to match date pattern
     bool isValidDate(String d) {
       final m = RegExp(r'^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})$').firstMatch(d);
       if (m == null) return false;
       final dd = int.tryParse(m.group(1)!);
       final mm = int.tryParse(m.group(2)!);
-      if (dd == null || mm == null) return false;
-      return dd >= 1 && dd <= 31 && mm >= 1 && mm <= 12;
+      final yy = int.tryParse(m.group(3)!);
+      if (dd == null || mm == null || yy == null) return false;
+      if (dd < 1 || dd > 31) return false;
+      if (mm < 1 || mm > 12) return false;
+      // Year must be reasonable: 2-digit (20-30) or 4-digit (2020-2030)
+      if (yy < 100) {
+        if (yy < 20 || yy > 30) return false;
+      } else {
+        if (yy < 2020 || yy > 2030) return false;
+      }
+      return true;
     }
 
     if (data.date.isEmpty || !isValidDate(data.date)) {
@@ -940,22 +974,24 @@ class MatchEngine {
       else if (all.contains('debit') || all.contains('credit')) data.paymentMethod = 'Card';
     }
 
-    // ── TOTAL amount (Priority strategy) ──
-    if (data.amount == 0 || (data.subtotal > 0 && data.amount > 0 && data.amount < data.subtotal * 0.1)) {
-      // GREEN box returned implausibly small amount — try full OCR fallback
-      print('[TOTAL] Green box amount=${data.amount} subtotal=${data.subtotal} — trying full OCR fallback');
-      _extractTotalFromFullOcr(data, lines, rawText);
-    }
-
-    // ── Subtotal ──
+    // ── Subtotal (extract BEFORE total so we can use it for sanity check) ──
     if (data.subtotal == 0) {
       for (final line in lines) {
         final lower = line.toLowerCase();
         if (lower.contains('sub total') || lower.contains('subtotal')) {
-          final v = _extractDecimal(line);
+          // Use isGrandTotal to enable missing-decimal heuristic for subtotal too
+          final v = _extractDecimal(line, isGrandTotal: true);
           if (v > 0) { data.subtotal = v; break; }
         }
       }
+    }
+
+    // ── TOTAL amount (Priority strategy) ──
+    // If GREEN box returned implausibly small amount (< 10% of subtotal),
+    // try full OCR fallback to find the real grand total.
+    if (data.amount == 0 || (data.subtotal > 0 && data.amount > 0 && data.amount < data.subtotal * 0.1)) {
+      print('[TOTAL] Green box amount=${data.amount} subtotal=${data.subtotal} — trying full OCR fallback');
+      _extractTotalFromFullOcr(data, lines, rawText);
     }
 
     // ── Tax ──
@@ -1033,13 +1069,20 @@ class MatchEngine {
   String _extractInvoiceNumber(String text) {
     final t = text.trim();
     if (t.isEmpty) return '';
+    // Pattern 1: Labeled invoice/receipt number
     final m = RegExp(
             r'(?:invoice|receipt|inv|no|pv|ref|doc|bill)[#\s:/-]*([A-Za-z0-9][A-Za-z0-9\-/]{3,})',
             caseSensitive: false)
         .firstMatch(t);
     if (m != null) return m.group(1)!.trim();
+    // Pattern 2: Standalone alphanumeric code that contains at least 2 digits
+    // (avoids matching pure-alpha words like "ceNn" or store names)
     final m2 = RegExp(r'\b([A-Za-z0-9][A-Za-z0-9\-/]{3,})\b').firstMatch(t);
-    if (m2 != null) return m2.group(1)!.trim();
+    if (m2 != null) {
+      final candidate = m2.group(1)!;
+      final digitCount = candidate.replaceAll(RegExp(r'\D'), '').length;
+      if (digitCount >= 2) return candidate.trim();
+    }
     return '';
   }
 
