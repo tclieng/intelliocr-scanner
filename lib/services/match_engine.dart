@@ -314,7 +314,7 @@ class MatchEngine {
       final greenRoi = result.mapRoi(template.anchorC!.roi);
       final greenText = await _extractRoiText(capturedFile, greenRoi, useDual: true);
       print('[GREEN] Raw OCR: "$greenText"');
-      final gv = _extractDecimal(greenText, isGrandTotal: true);
+      final gv = _extractGreenTotal(greenText);
       print('[GREEN] Parsed amount: $gv');
       if (gv > 0) data.amount = gv;
     }
@@ -1021,42 +1021,30 @@ class MatchEngine {
       else if (all.contains('debit') || all.contains('credit')) data.paymentMethod = 'Card';
     }
 
-    // ── Subtotal (extract BEFORE total so we can use it for sanity check) ──
-    if (data.subtotal == 0) {
-      for (final line in lines) {
-        final lower = line.toLowerCase();
-        if (lower.contains('sub total') || lower.contains('subtotal') ||
-            lower.contains('sub-total') || lower.contains('sub ttl')) {
-          // Use isGrandTotal to enable missing-decimal heuristic for subtotal too
-          final v = _extractDecimal(line, isGrandTotal: true);
-          if (v > 0) { data.subtotal = v; break; }
-        }
-      }
-      // Fallback: subtotal equals the sum of item line amounts.
-      if (data.subtotal == 0) {
-        final itemsSum = data.items.fold(0.0, (s, it) => s + it.amount);
-        if (itemsSum > 0) data.subtotal = itemsSum;
+    // ── GRAND TOTAL (GREEN BOX) and SUBTOTAL ──
+    // The GREEN BOX is the authoritative Grand Total. Per spec, the subtotal
+    // (sum of item line amounts) MUST equal the GREEN BOX grand total for
+    // every receipt (these receipts carry no separate tax/discount line).
+    final itemsSum = data.items.fold(0.0, (s, it) => s + it.amount);
+    print('[TOTAL] Green box grand total=${data.amount}  item line sum=$itemsSum');
+
+    if (data.amount == 0) {
+      // GREEN box failed to capture anything — fall back to full-page OCR,
+      // then to the sum of item line amounts as a last resort.
+      print('[TOTAL] Green box empty — trying full OCR fallback');
+      _extractTotalFromFullOcr(data, lines, rawText);
+      if (data.amount == 0 && itemsSum > 0) {
+        print('[TOTAL] Full OCR also empty — using item line sum $itemsSum');
+        data.amount = itemsSum;
       }
     }
 
-    // ── TOTAL amount (Priority strategy) ──
-    // Trigger full-OCR fallback when the GREEN amount is missing or wildly
-    // inconsistent with the sum of extracted item line amounts (e.g. GREEN
-    // caught a stray value while the real total sits in the item block).
-    final itemsSum = data.items.fold(0.0, (s, it) => s + it.amount);
-    final ratio = data.amount > 0 && itemsSum > 0 ? data.amount / itemsSum : 0.0;
-    if (data.amount == 0 ||
-        (data.subtotal > 0 && data.amount > 0 && data.amount < data.subtotal * 0.1) ||
-        (itemsSum > 0 && (ratio < 0.5 || ratio > 2.0))) {
-      print('[TOTAL] Green box amount=${data.amount} subtotal=${data.subtotal} itemsSum=$itemsSum — trying full OCR fallback');
-      _extractTotalFromFullOcr(data, lines, rawText);
-    }
-    // Final reconciliation: if still inconsistent, trust the item line sum
-    // (derived from the same receipt lines), so Grand Total matches Items sheet.
-    final finalRatio = data.amount > 0 && itemsSum > 0 ? data.amount / itemsSum : 0.0;
-    if (itemsSum > 0 && (data.amount == 0 || finalRatio < 0.5 || finalRatio > 2.0)) {
-      print('[TOTAL] Reconciling grand total to item line sum: ${data.amount} -> $itemsSum');
-      data.amount = itemsSum;
+    // Subtotal equals the GREEN BOX grand total (per spec). Once item
+    // extraction is clean, the item line sum should converge to this too.
+    if (data.amount > 0) {
+      data.subtotal = data.amount;
+    } else if (itemsSum > 0) {
+      data.subtotal = itemsSum;
     }
 
     // ── Tax ──
@@ -1165,6 +1153,41 @@ class MatchEngine {
       if (d != null && d > 0) return d;
     }
     return double.tryParse(raw) ?? 0;
+  }
+
+  /// Extract the grand-total figure from GREEN-box OCR text.
+  /// Totals are usually labelled TOTAL/GRAND/AMOUNT DUE and sit at the bottom.
+  /// Prefer the decimal that follows such a keyword; otherwise the last
+  /// (bottom-most) decimal in the box — the GREEN box may also capture a
+  /// neighbouring CASH/CHANGE line, so we must not blindly take the first number.
+  double _extractGreenTotal(String text) {
+    final patterns = [
+      RegExp(r'grand\s*total', caseSensitive: false),
+      RegExp(r'amount\s*due', caseSensitive: false),
+      RegExp(r'amount\s*payable', caseSensitive: false),
+      RegExp(r'balance\s*due', caseSensitive: false),
+      RegExp(r'\bpayable\b', caseSensitive: false),
+      RegExp(r'\btotal\b', caseSensitive: false),
+    ];
+    int bestEnd = -1;
+    for (final p in patterns) {
+      for (final m in p.allMatches(text.toLowerCase())) {
+        if (m.end > bestEnd) bestEnd = m.end;
+      }
+    }
+    if (bestEnd >= 0) {
+      final after = text.substring(bestEnd);
+      final v = _extractDecimal(after, isGrandTotal: true);
+      if (v > 0) return v;
+    }
+    // No keyword: take the last (bottom-most) decimal in the box.
+    final lines = text.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+    double last = 0;
+    for (final line in lines) {
+      final v = _extractDecimal(line, isGrandTotal: true);
+      if (v > 0) last = v;
+    }
+    return last;
   }
 
   double _extractDecimal(String text, {bool isGrandTotal = false}) {
