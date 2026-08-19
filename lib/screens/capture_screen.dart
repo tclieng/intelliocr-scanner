@@ -45,7 +45,12 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
         // Step 1: Preprocess the image (edge detection, perspective, etc.)
         final bytes = await File(photo.path).readAsBytes();
-        final processedBytes = await ImageProcessor.processReceipt(bytes);
+        Uint8List processedBytes;
+        try {
+          processedBytes = await ImageProcessor.processReceipt(bytes);
+        } catch (_) {
+          processedBytes = bytes; // keep original if preprocessing fails
+        }
 
         // Save processed image to temp then copy
         final tempFile = File(photo.path.replaceAll('.jpg', '_proc.jpg'));
@@ -67,26 +72,44 @@ class _CaptureScreenState extends State<CaptureScreen> {
 
   Future<void> _pickFromGallery() async {
     try {
-      final image = await _picker.pickImage(
-        source: ImageSource.gallery,
+      final images = await _picker.pickMultiImage(
         maxWidth: 2048,
         maxHeight: 2048,
         imageQuality: 85,
       );
-      if (image != null) {
-        setState(() => _status = 'Processing image...');
+      if (images.isEmpty) return;
+      setState(() => _status = 'Processing ${images.length} image(s)...');
 
-        final bytes = await File(image.path).readAsBytes();
-        final processedBytes = await ImageProcessor.processReceipt(bytes);
+      int saved = 0;
+      for (final image in images) {
+        try {
+          final bytes = await File(image.path).readAsBytes();
+          Uint8List processedBytes;
+          try {
+            processedBytes = await ImageProcessor.processReceipt(bytes);
+          } catch (_) {
+            processedBytes = bytes; // keep original if preprocessing fails
+          }
 
-        final tempFile = File(image.path.replaceAll('.jpg', '_proc.jpg'));
-        await tempFile.writeAsBytes(processedBytes);
+          final tempFile = File(image.path.replaceAll('.jpg', '_proc.jpg'));
+          await tempFile.writeAsBytes(processedBytes);
 
-        await _sdCard.saveCapture(tempFile);
-        if (await tempFile.exists()) await tempFile.delete();
+          await _sdCard.saveCapture(tempFile);
+          if (await tempFile.exists()) await tempFile.delete();
+          saved++;
+        } catch (e) {
+          // Continue with the rest of the batch instead of aborting everything.
+          print('Gallery image skipped (error): $e');
+        }
+      }
 
-        setState(() => _savedCount++);
-        setState(() => _status = '✅ Saved from gallery');
+      if (saved > 0) {
+        setState(() {
+          _savedCount += saved;
+          _status = '✅ Saved $saved image(s) to IntelliOCR/Captures/';
+        });
+      } else {
+        setState(() => _status = 'Error: could not process selected images');
       }
     } catch (e) {
       setState(() => _status = 'Error: $e');

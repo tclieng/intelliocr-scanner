@@ -688,16 +688,19 @@ class MatchEngine {
             final q = int.tryParse(pq.group(2)!);
             if (p != null && p > 0) pqPrice = p;
             if (q != null && q > 0) pqQty = q;
+            if (pqQty > 999) pqQty = 1; // guard against barcode-as-quantity (e.g. 201503)
             continue;
           }
 
           if (_isPureNumber(t)) {
             // Barcode / SKU (long digit run) — neither description nor amount.
-            // In YELLOW box context, real prices always have decimal points or
-            // are in price*qty format. Pure integers are barcode fragments.
+            // True barcodes are 7+ digits (e.g. 021024008591014944). 4-6 digit
+            // pure integers in a price area are almost always a decimal point
+            // dropped by OCR ("2100" -> "21.00", "3818" -> "38.18") — common on
+            // budget-mart receipts where unit prices are single/double digits.
             final digitCount = t.replaceAll(RegExp(r'\D'), '').length;
-            if (digitCount >= 5) continue; // Skip barcodes (5+ digits, no decimal)
-            final v = _extractDecimal(t);
+            if (digitCount >= 7) continue; // Skip true barcodes
+            final v = _moneyCell(t);
             if (v > 0) decs.add(_Dec(b.centerX, v));
             continue;
           }
@@ -1022,20 +1025,38 @@ class MatchEngine {
     if (data.subtotal == 0) {
       for (final line in lines) {
         final lower = line.toLowerCase();
-        if (lower.contains('sub total') || lower.contains('subtotal')) {
+        if (lower.contains('sub total') || lower.contains('subtotal') ||
+            lower.contains('sub-total') || lower.contains('sub ttl')) {
           // Use isGrandTotal to enable missing-decimal heuristic for subtotal too
           final v = _extractDecimal(line, isGrandTotal: true);
           if (v > 0) { data.subtotal = v; break; }
         }
       }
+      // Fallback: subtotal equals the sum of item line amounts.
+      if (data.subtotal == 0) {
+        final itemsSum = data.items.fold(0.0, (s, it) => s + it.amount);
+        if (itemsSum > 0) data.subtotal = itemsSum;
+      }
     }
 
     // ── TOTAL amount (Priority strategy) ──
-    // If GREEN box returned implausibly small amount (< 10% of subtotal),
-    // try full OCR fallback to find the real grand total.
-    if (data.amount == 0 || (data.subtotal > 0 && data.amount > 0 && data.amount < data.subtotal * 0.1)) {
-      print('[TOTAL] Green box amount=${data.amount} subtotal=${data.subtotal} — trying full OCR fallback');
+    // Trigger full-OCR fallback when the GREEN amount is missing or wildly
+    // inconsistent with the sum of extracted item line amounts (e.g. GREEN
+    // caught a stray value while the real total sits in the item block).
+    final itemsSum = data.items.fold(0.0, (s, it) => s + it.amount);
+    final ratio = data.amount > 0 && itemsSum > 0 ? data.amount / itemsSum : 0.0;
+    if (data.amount == 0 ||
+        (data.subtotal > 0 && data.amount > 0 && data.amount < data.subtotal * 0.1) ||
+        (itemsSum > 0 && (ratio < 0.5 || ratio > 2.0))) {
+      print('[TOTAL] Green box amount=${data.amount} subtotal=${data.subtotal} itemsSum=$itemsSum — trying full OCR fallback');
       _extractTotalFromFullOcr(data, lines, rawText);
+    }
+    // Final reconciliation: if still inconsistent, trust the item line sum
+    // (derived from the same receipt lines), so Grand Total matches Items sheet.
+    final finalRatio = data.amount > 0 && itemsSum > 0 ? data.amount / itemsSum : 0.0;
+    if (itemsSum > 0 && (data.amount == 0 || finalRatio < 0.5 || finalRatio > 2.0)) {
+      print('[TOTAL] Reconciling grand total to item line sum: ${data.amount} -> $itemsSum');
+      data.amount = itemsSum;
     }
 
     // ── Tax ──
@@ -1128,6 +1149,22 @@ class MatchEngine {
       if (digitCount >= 2) return candidate.trim();
     }
     return '';
+  }
+
+  /// Convert a pure-number YELLOW price cell to a money value.
+  /// Pure integers of 4-6 digits are treated as a dropped decimal point
+  /// ("2100" -> 21.00). 7+ digit numbers are barcodes and return 0.
+  double _moneyCell(String text) {
+    final raw = text.replaceAll(',', '').replaceAll(' ', '').trim();
+    if (raw.contains('.')) {
+      return double.tryParse(raw) ?? 0;
+    }
+    if (raw.length >= 4 && raw.length <= 6) {
+      final d = double.tryParse(
+          '${raw.substring(0, raw.length - 2)}.${raw.substring(raw.length - 2)}');
+      if (d != null && d > 0) return d;
+    }
+    return double.tryParse(raw) ?? 0;
   }
 
   double _extractDecimal(String text, {bool isGrandTotal = false}) {
