@@ -581,6 +581,50 @@ class MatchEngine {
     final rawRows = _groupBlocksIntoRows(yellowBlocks);
     print('[YELLOW] Grouped into ${rawRows.length} rows');
 
+    // ── Merge rows: product name rows (no prices) with their price rows ──
+    // Receipt items often span 2 lines: line1=product name, line2=barcode+price.
+    // The barcode creates a Y-gap that splits them. Merge a row with no prices
+    // into the NEXT row (which should have the price).
+    bool hasPriceLike(List<OcrBlock> r) {
+      for (final b in r) {
+        final t = b.text.trim();
+        // price*qty pattern
+        if (RegExp(r'\d[\d.,]*\s*[xX×*]\s*\d+').hasMatch(t)) return true;
+        // Decimal amount (but not pure integer barcode)
+        if (RegExp(r'\d+\.\d{2}').hasMatch(t)) return true;
+      }
+      return false;
+    }
+    // Check if row looks like a product name (has letters, no price patterns)
+    bool looksLikeProductName(List<OcrBlock> r) {
+      for (final b in r) {
+        final t = b.text.trim();
+        if (RegExp(r'[A-Za-z]{3,}').hasMatch(t) && !RegExp(r'\d[\d.,]*\s*[xX×*]').hasMatch(t)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    final mergedRows = <List<OcrBlock>>[];
+    for (int i = 0; i < rawRows.length; i++) {
+      final row = rawRows[i];
+      // Only merge if:
+      // 1. Current row has no price indicators (product name only)
+      // 2. Next row exists and has price indicators
+      // 3. Next row does NOT look like another product name (would indicate wrong merge)
+      if (!hasPriceLike(row) && i + 1 < rawRows.length &&
+          hasPriceLike(rawRows[i + 1]) && !looksLikeProductName(rawRows[i + 1])) {
+        // This row has no price indicators — merge into next row
+        final merged = List<OcrBlock>.from(row)..addAll(rawRows[i + 1]);
+        mergedRows.add(merged);
+        i++; // Skip next row since we consumed it
+      } else {
+        mergedRows.add(row);
+      }
+    }
+    print('[YELLOW] Merged into ${mergedRows.length} rows');
+
     // ── Column-independent row extraction ──
     // We no longer rely on a fixed "amount" column (which is fragile when the
     // YELLOW box has a right margin or amounts fall just inside its edge).
@@ -591,7 +635,7 @@ class MatchEngine {
     String pendingDesc = '';
     final requireAmount = cfg.detectRowsBySubtotal;
 
-    for (final row in rawRows) {
+    for (final row in mergedRows) {
       // Collect all blocks in this row, sorted left-to-right
       final sortedRow = List<OcrBlock>.from(row)..sort((a, b) => a.x.compareTo(b.x));
       
