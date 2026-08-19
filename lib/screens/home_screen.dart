@@ -91,7 +91,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
         final rawText = await _ocr.recognizeText(originalFile);
         debugPrint('OCR_RAW[${i}]: ${rawText.substring(0, min(200, rawText.length))}...');
-        final data = _parseReceiptData(_captures[i].uri.pathSegments.last, rawText);
+        final rawFname = _captures[i].uri.pathSegments.last;
+        // Clean internal prefixes for display: CAP_{timestamp}_{basename}
+        final cleanFname = rawFname
+            .replaceAll(RegExp(r'^CAP_\d+_'), '')
+            .replaceAll(RegExp(r'_scaled_\d+'), '')
+            .replaceAll(RegExp(r'_proc$'), '')
+            .replaceAll(RegExp(r'_scaled$'), '');
+        final data = _parseReceiptData(cleanFname, rawText);
 
         // ── Supplier-name-based template matching ──
         // OCR detects the supplier name from the receipt header, then we find
@@ -140,7 +147,11 @@ class _HomeScreenState extends State<HomeScreen> {
         try { if (await originalFile.exists()) await originalFile.delete(); } catch (_) {}
       } catch (e) {
         _results.add(ReceiptData(
-          filename: _captures[i].uri.pathSegments.last,
+          filename: _captures[i].uri.pathSegments.last
+              .replaceAll(RegExp(r'^CAP_\d+_'), '')
+              .replaceAll(RegExp(r'_scaled_\d+'), '')
+              .replaceAll(RegExp(r'_proc$'), '')
+              .replaceAll(RegExp(r'_scaled$'), ''),
           description: 'Error: $e',
         ));
       }
