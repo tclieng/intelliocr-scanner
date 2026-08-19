@@ -135,7 +135,10 @@ class _HomeScreenState extends State<HomeScreen> {
             data.confidence = enhanced.confidence;
             data.isValidated = enhanced.isValidated;
             // Use matched template's supplier name for Excel export
-            data.supplier = matchedTemplate.supplierName;
+            // Only override if template matched — keep per-receipt supplier otherwise
+            if (matchedTemplate.supplierName.isNotEmpty) {
+              data.supplier = matchedTemplate.supplierName;
+            }
           } catch (e) {
             debugPrint('Template extraction error: $e');
           }
@@ -247,6 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
       'majestic', 'majestik', 'ong tai', 'ong tai', 'kk', 'sin', 'heng', 'sdn', 'bhd',
       'enterprise', 'supermarket', 'mart', 'shop', 'store', 'bakeri', 'bakery',
       'tasty', 'poh', 'ayam', 'milo', 'noodle', 'noodles', 'food', 'restaurant',
+      'atas frozen', 'top frozen',
     ];
     String? detectedSupplier;
     for (final line in lines.take(20)) {

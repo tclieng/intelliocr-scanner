@@ -229,6 +229,15 @@ class _MasterTemplatesScreenState extends State<MasterTemplatesScreen> {
                   ],
                 ),
               ),
+              // Delete button
+              IconButton(
+                icon: Icon(
+                  Icons.delete_outline,
+                  color: Colors.red[400],
+                ),
+                onPressed: () => _confirmDelete(template),
+                tooltip: 'Delete template',
+              ),
               // Arrow indicator
               const Icon(
                 Icons.chevron_right,
@@ -259,6 +268,41 @@ class _MasterTemplatesScreenState extends State<MasterTemplatesScreen> {
           fontWeight: FontWeight.bold,
           color: active ? color : Colors.grey[500],
         ),
+      ),
+    );
+  }
+
+  void _confirmDelete(ReceiptTemplate template) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Template?'),
+        content: Text(
+          'Are you sure you want to delete "${template.supplierName}"?\n'
+          'This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _templateService.deleteTemplate(template.id);
+              _loadTemplates();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('"${template.supplierName}" deleted'),
+                    backgroundColor: Colors.red[400],
+                  ),
+                );
+              }
+            },
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          ),
+        ],
       ),
     );
   }
