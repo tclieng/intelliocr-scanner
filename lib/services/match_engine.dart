@@ -1022,9 +1022,12 @@ class MatchEngine {
     }
 
     // ── GRAND TOTAL (GREEN BOX) and SUBTOTAL ──
-    // The GREEN BOX is the authoritative Grand Total. Per spec, the subtotal
-    // (sum of item line amounts) MUST equal the GREEN BOX grand total for
-    // every receipt (these receipts carry no separate tax/discount line).
+    // GREEN BOX is the authoritative Grand Total. Subtotal is the raw sum of
+    // item line amounts; the printed Grand Total may differ by a small
+    // rounding adjustment (e.g. subtotal 652.01 -> grand total 652.00, or
+    // 331.18 -> 331.20, or 372.47 -> 372.45). So subtotal and grand total
+    // are related but NOT forced equal — the rounding difference is real and
+    // expected on these receipts.
     final itemsSum = data.items.fold(0.0, (s, it) => s + it.amount);
     print('[TOTAL] Green box grand total=${data.amount}  item line sum=$itemsSum');
 
@@ -1039,12 +1042,12 @@ class MatchEngine {
       }
     }
 
-    // Subtotal equals the GREEN BOX grand total (per spec). Once item
-    // extraction is clean, the item line sum should converge to this too.
-    if (data.amount > 0) {
-      data.subtotal = data.amount;
-    } else if (itemsSum > 0) {
+    // Subtotal = raw sum of item line amounts (unrounded).
+    // Grand Total (data.amount) = GREEN BOX figure (already includes rounding).
+    if (itemsSum > 0) {
       data.subtotal = itemsSum;
+    } else if (data.amount > 0) {
+      data.subtotal = data.amount; // no items extracted; best available
     }
 
     // ── Tax ──
