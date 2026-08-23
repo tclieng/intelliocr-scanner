@@ -342,6 +342,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
         ],
       ),
     );
+  }
 
   void _initializeVerticalLines() {
     if (_yellowBox == Rect.zero) return;
