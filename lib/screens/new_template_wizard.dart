@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:image/image.dart' as img;
 import '../services/template_service.dart';
 import '../services/image_processor.dart';
+import '../services/ocr_service.dart';
 import '../models/receipt_template.dart';
 import '../models/anchor_point.dart';
 import '../models/field_roi.dart';
@@ -194,7 +195,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
       _blueBox = result.blue;
       _yellowBox = result.yellow;
       _greenBox = result.green;
-      _supplierFromBlackBox = result.supplierName;
+      // Supplier name will be set after OCR in _performBlackBoxOCR
 
       // Update template anchors
       // BLACK box: Supplier Name (manual, stored in template.supplierName directly)
@@ -246,7 +247,101 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
       // Initialize vertical lines for Step 3
       _initializeVerticalLines();
     });
+    
+    // Perform OCR on BLACK box to get supplier name
+    await _performBlackBoxOCR();
   }
+  
+  // OCR the BLACK box to extract supplier name
+  Future<void> _performBlackBoxOCR() async {
+    if (_processedImage == null || _blackBox == Rect.zero) return;
+    
+    setState(() => _isProcessing = true);
+    
+    try {
+      // Crop the BLACK box region
+      final cropped = img.copyCrop(
+        _processedImage!,
+        x: _blackBox.left.toInt(),
+        y: _blackBox.top.toInt(),
+        width: _blackBox.width.toInt(),
+        height: _blackBox.height.toInt(),
+      );
+      
+      // Save cropped image to temp file for OCR
+      final tempDir = Directory.systemTemp;
+      final tempFile = File('${tempDir.path}/black_box_ocr_${DateTime.now().millisecondsSinceEpoch}.jpg');
+      await tempFile.writeAsBytes(img.encodeJpg(cropped, quality: 95));
+      
+      // Use OCR service to read text
+      final ocrService = OCRService();
+      final text = await ocrService.recognizeText(tempFile);
+      
+      // Clean up temp file
+      try {
+        if (await tempFile.exists()) await tempFile.delete();
+      } catch (_) {}
+      
+      setState(() {
+        _supplierFromBlackBox = text.trim();
+        _isProcessing = false;
+      });
+      
+      // Show the OCR result to user for confirmation
+      if (mounted) {
+        _showSupplierConfirmationDialog(_supplierFromBlackBox);
+      }
+    } catch (e) {
+      setState(() => _isProcessing = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('OCR failed: $e')),
+        );
+      }
+    }
+  }
+  
+  // Show dialog to confirm/edit OCR result
+  void _showSupplierConfirmationDialog(String ocrResult) {
+    final controller = TextEditingController(text: ocrResult);
+    
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm Supplier Name'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('OCR detected from BLACK box:'),
+            const SizedBox(height: 8),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: 'Supplier Name',
+                border: OutlineInputBorder(),
+                helperText: 'Edit if OCR is incorrect',
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              setState(() => _supplierFromBlackBox = controller.text.trim());
+              Navigator.of(ctx).pop();
+            },
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
 
   void _initializeVerticalLines() {
     if (_yellowBox == Rect.zero) return;
@@ -954,12 +1049,11 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
 // ── Helper Classes ──
 
 class _FiveBoxResult {
-  final Rect black;   // Supplier Name (manual)
+  final Rect black;   // Supplier Name position (OCR will read from here)
   final Rect red;     // Invoice Number
   final Rect blue;    // Invoice Date
   final Rect yellow;  // Items
   final Rect green;   // Grand Total
-  final String supplierName; // From BLACK box manual entry
 
   _FiveBoxResult({
     required this.black,
@@ -967,7 +1061,6 @@ class _FiveBoxResult {
     required this.blue,
     required this.yellow,
     required this.green,
-    required this.supplierName,
   });
 }
 
@@ -1007,13 +1100,12 @@ class _FiveBoxEditorScreen extends StatefulWidget {
 }
 
 class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
-  late Rect _black;   // Supplier Name (manual entry)
+  late Rect _black;   // Supplier Name (OCR)
   late Rect _red;     // Invoice Number
   late Rect _blue;    // Invoice Date
   late Rect _yellow;  // Items
   late Rect _green;   // Grand Total
   String? _selectedBox;
-  final _supplierController = TextEditingController(); // For BLACK box
   final _invoiceController = TextEditingController();  // For RED box
   late final Uint8List _cachedJpg; // encoded once, reused every frame
 
@@ -1030,7 +1122,6 @@ class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
 
   @override
   void dispose() {
-    _supplierController.dispose();
     _invoiceController.dispose();
     super.dispose();
   }
@@ -1145,19 +1236,45 @@ class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
             ),
           ),
 
-          // BLACK box text input (Supplier Name - manual entry)
+          // BLACK box info (OCR will read supplier name from this box)
           if (_selectedBox == 'black')
             Container(
               padding: const EdgeInsets.all(12),
               color: Colors.white,
-              child: TextField(
-                controller: _supplierController,
-                decoration: const InputDecoration(
-                  labelText: 'Supplier Name (MANUAL - not OCR)',
-                  hintText: 'e.g. ST ROSYAM MART SDN BHD',
-                  border: OutlineInputBorder(),
-                  helperText: 'This name will be used for all receipts using this template',
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '⬛ BLACK Box - Supplier Name',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Position this box over the company name on the receipt. OCR will read the text inside this box when you tap "Done".',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 16, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Make sure the company name is clearly visible inside the BLACK box',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
 
@@ -1443,7 +1560,6 @@ class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
       blue: _blue,
       yellow: _yellow,
       green: _green,
-      supplierName: _supplierController.text.trim(),
     ));
   }
 }
