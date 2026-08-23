@@ -324,7 +324,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Priority 3: Fuzzy match against existing template names
     if (detectedSupplier == null && candidateLines.isNotEmpty) {
-      final templates = await _templateService.getTemplates();
+      final templates = _templateService.templates;
       if (templates.isNotEmpty) {
         String? bestMatch;
         double bestScore = 0;
