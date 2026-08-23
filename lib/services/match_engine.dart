@@ -714,8 +714,8 @@ class MatchEngine {
         // for both unit price and amount. Only use decs (standalone decimal numbers)
         // when price*qty wasn't found.
         final double amount;
-        final double unitPrice;
-        final int qty = pqQty > 0 ? pqQty : 1;
+        double unitPrice;
+        int qty = pqQty > 0 ? pqQty : 1;
         if (pqPrice > 0) {
           unitPrice = pqPrice;
           amount = pqPrice * qty;
@@ -724,6 +724,26 @@ class MatchEngine {
           unitPrice = (decs.length >= 2)
               ? decs[decs.length - 2].value
               : 0.0;
+          // FIX: When amount < unitPrice the columns are swapped. This is physically
+          // impossible for grocery (amount = qty * unitPrice, qty >= 1, so amount >= unitPrice).
+          // On ATAS FROZEN receipts the YELLOW box captures: [qty, unitPrice] instead of
+          // [unitPrice, amount] — e.g. CHICKEN CHOP shows decs=[24, 16.70] where 24 is the
+          // qty (KG count) and 16.70 is the unit price, but the amount (400.80) is outside
+          // the box ROI. When the larger value is a whole number 2-100 it is almost
+          // certainly the qty column, not the amount. Derive amount = qty * unitPrice.
+          if (amount > 0 &&
+              unitPrice > 0 &&
+              amount < unitPrice &&
+              unitPrice >= 2 &&
+              unitPrice <= 100 &&
+              unitPrice == unitPrice.roundToDouble()) {
+            // unitPrice is actually the qty; the original amount is the real unit price
+            qty = unitPrice.round();
+            final realUnitPrice = amount;
+            amount = qty * realUnitPrice;
+            unitPrice = realUnitPrice;
+            print('[YELLOW] Fixed swap: qty=$qty unitPrice=$unitPrice amount=$amount');
+          }
         }
 
         final descText = descParts.join(' ').trim();
