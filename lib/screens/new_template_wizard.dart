@@ -45,6 +45,9 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
   // Column definitions (Step 3)
   List<_ColumnLine> _verticalLines = [];
   String _supplierName = '';
+  
+  // Processing state
+  bool _isProcessing = false;
 
   @override
   void initState() {
@@ -274,7 +277,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
       await tempFile.writeAsBytes(img.encodeJpg(cropped, quality: 95));
       
       // Use OCR service to read text
-      final ocrService = OCRService();
+      final ocrService = OcrService();
       final text = await ocrService.recognizeText(tempFile);
       
       // Clean up temp file
