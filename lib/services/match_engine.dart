@@ -713,7 +713,7 @@ class MatchEngine {
         // Priority: if we found price*qty pattern, that's the most reliable source
         // for both unit price and amount. Only use decs (standalone decimal numbers)
         // when price*qty wasn't found.
-        final double amount;
+        double amount;
         double unitPrice;
         int qty = pqQty > 0 ? pqQty : 1;
         if (pqPrice > 0) {
