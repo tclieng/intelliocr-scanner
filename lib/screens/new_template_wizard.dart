@@ -12,7 +12,7 @@ import '../models/field_roi.dart';
 
 /// New Template Wizard — 4 Steps
 /// Step 1: Capture Master Receipt
-/// Step 2: Draw 4 Boxes (RED, BLUE, YELLOW, GREEN)
+/// Step 2: Draw 5 Boxes (BLACK, RED, BLUE, YELLOW, GREEN)
 /// Step 3: Define Columns in YELLOW Box
 /// Step 4: Save Template
 class NewTemplateWizard extends StatefulWidget {
@@ -33,12 +33,13 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
   img.Image? _processedImage;
   Uint8List? _cachedJpg; // re-encoded JPEG cache to avoid encode-on-every-rebuild
 
-  // Four boxes state (Step 2)
-  Rect _redBox = Rect.zero;    // RED: Company Name (Anchor A)
-  Rect _blueBox = Rect.zero;   // BLUE: Date (Anchor B)
+  // Five boxes state (Step 2) - NEW: BLACK box for Supplier Name
+  Rect _blackBox = Rect.zero;  // BLACK: Supplier Name (manual, not OCR)
+  Rect _redBox = Rect.zero;    // RED: Invoice Number
+  Rect _blueBox = Rect.zero;   // BLUE: Invoice Date
   Rect _yellowBox = Rect.zero; // YELLOW: Items (ROI Fields)
-  Rect _greenBox = Rect.zero;   // GREEN: Total (Anchor C)
-  String _redExpectedText = '';
+  Rect _greenBox = Rect.zero;  // GREEN: Grand Total
+  String _supplierFromBlackBox = ''; // Supplier name entered by user
 
   // Column definitions (Step 3)
   List<_ColumnLine> _verticalLines = [];
@@ -64,8 +65,9 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
   bool get _canProceed {
     switch (_currentStep) {
       case 0: return _masterImage != null;
-      case 1: return _redBox != Rect.zero && _blueBox != Rect.zero &&
-                    _yellowBox != Rect.zero && _greenBox != Rect.zero;
+      case 1: return _blackBox != Rect.zero && _redBox != Rect.zero &&
+                    _blueBox != Rect.zero && _yellowBox != Rect.zero &&
+                    _greenBox != Rect.zero;
       case 2: return _linesCount >= 2; // At least 2 vertical lines = 1 column
       case 3: return _canSave; // All boxes set, lines defined, name entered
       default: return false;
@@ -76,12 +78,13 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
 
   bool get _canSave =>
       _masterImage != null &&
+      _blackBox != Rect.zero &&
       _redBox != Rect.zero &&
       _blueBox != Rect.zero &&
       _yellowBox != Rect.zero &&
       _greenBox != Rect.zero &&
       _linesCount >= 2 &&
-      _redExpectedText.trim().isNotEmpty;
+      _supplierFromBlackBox.trim().isNotEmpty;
 
   // ── Step 1: Capture Master Receipt ──
 
@@ -132,15 +135,21 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
 
   void _initializeBoxes() {
     if (_processedImage == null) return;
-    
+
     final w = _processedImage!.width.toDouble();
     final h = _processedImage!.height.toDouble();
-    
-    // Initialize boxes in top-to-bottom sequence, kept within receipt bounds
-    _redBox = Rect.fromLTWH(w * 0.10, h * 0.04, w * 0.80, h * 0.07);   // Company name (top)
-    _blueBox = Rect.fromLTWH(w * 0.10, h * 0.14, w * 0.80, h * 0.05);  // Date (below red)
-    _yellowBox = Rect.fromLTWH(w * 0.08, h * 0.30, w * 0.84, h * 0.40); // Items (middle, ~30%-70%)
-    _greenBox = Rect.fromLTWH(w * 0.30, h * 0.82, w * 0.50, h * 0.07);  // Total (bottom)
+
+    // Initialize 5 boxes in top-to-bottom sequence
+    // BLACK: Supplier Name (topmost, manual entry - not OCR)
+    _blackBox = Rect.fromLTWH(w * 0.10, h * 0.02, w * 0.80, h * 0.06);
+    // RED: Invoice Number (was Company name)
+    _redBox = Rect.fromLTWH(w * 0.10, h * 0.10, w * 0.80, h * 0.06);
+    // BLUE: Invoice Date
+    _blueBox = Rect.fromLTWH(w * 0.10, h * 0.18, w * 0.80, h * 0.05);
+    // YELLOW: Items (middle)
+    _yellowBox = Rect.fromLTWH(w * 0.08, h * 0.30, w * 0.84, h * 0.40);
+    // GREEN: Grand Total (bottom)
+    _greenBox = Rect.fromLTWH(w * 0.30, h * 0.82, w * 0.50, h * 0.07);
   }
 
   void _rotateMaster(int degrees) {
@@ -158,16 +167,17 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     });
   }
 
-  // ── Step 2: Draw 4 Boxes ──
+  // ── Step 2: Draw 5 Boxes (BLACK, RED, BLUE, YELLOW, GREEN) ──
 
-  Future<void> _openFourBoxEditor() async {
+  Future<void> _openFiveBoxEditor() async {
     if (_processedImage == null) return;
 
-    final result = await Navigator.of(context).push<_FourBoxResult>(
+    final result = await Navigator.of(context).push<_FiveBoxResult>(
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => _FourBoxEditorScreen(
+        builder: (_) => _FiveBoxEditorScreen(
           image: _processedImage!,
+          initialBlack: _blackBox,
           initialRed: _redBox,
           initialBlue: _blueBox,
           initialYellow: _yellowBox,
@@ -179,40 +189,52 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     if (result == null) return;
 
     setState(() {
+      _blackBox = result.black;
       _redBox = result.red;
       _blueBox = result.blue;
       _yellowBox = result.yellow;
       _greenBox = result.green;
-      _redExpectedText = result.redExpectedText;
-      
+      _supplierFromBlackBox = result.supplierName;
+
       // Update template anchors
+      // BLACK box: Supplier Name (manual, stored in template.supplierName directly)
+      // We don't create an AnchorPoint for black - it's just for visual positioning reference
+
       _template.anchorA = AnchorPoint(
         id: 'anchor_a',
-        label: 'Company Name',
+        label: 'Invoice Number',
         type: 'header_a',
         roi: _redBox,
-        expectedText: _redExpectedText,
+        expectedText: '',
         position: (_redBox.top + _redBox.bottom) / 2 / _template.masterHeight,
       );
-      
+
       _template.anchorB = AnchorPoint(
         id: 'anchor_b',
-        label: 'Date',
+        label: 'Invoice Date',
         type: 'header_b',
         roi: _blueBox,
         expectedText: '',
         position: (_blueBox.top + _blueBox.bottom) / 2 / _template.masterHeight,
       );
-      
+
       _template.anchorC = AnchorPoint(
         id: 'anchor_c',
-        label: 'Total',
+        label: 'Grand Total',
         type: 'footer_c',
         roi: _greenBox,
         expectedText: '',
         position: (_greenBox.top + _greenBox.bottom) / 2 / _template.masterHeight,
       );
-      
+
+      // BLACK box - Supplier Name anchor (stored but not used for OCR)
+      _template.anchorBlack = AnchorPoint(
+        type: 'black',
+        roi: _blackBox,
+        expectedText: _supplierFromBlackBox,
+        position: (_blackBox.top + _blackBox.bottom) / 2 / _template.masterHeight,
+      );
+
       _template.yellowBoxConfig = YellowBoxConfig(
         id: 'yellow_${DateTime.now().millisecondsSinceEpoch}',
         roi: _yellowBox,
@@ -309,8 +331,9 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
   // ── Step 4: Save ──
 
   void _showSaveDialog() {
-    final nameController = TextEditingController(text: _redExpectedText);
-    
+    // Use supplier name from BLACK box if available, otherwise empty
+    final nameController = TextEditingController(text: _supplierFromBlackBox);
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -319,13 +342,14 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Enter supplier name:'),
+            const Text('Supplier name (from BLACK box):'),
             const SizedBox(height: 8),
             TextField(
               controller: nameController,
               decoration: const InputDecoration(
-                hintText: 'e.g. ST ROSYAM MART',
+                hintText: 'e.g. ST ROSYAM MART SDN BHD',
                 border: OutlineInputBorder(),
+                helperText: 'Edit if needed - this is the template identifier',
               ),
             ),
           ],
@@ -344,7 +368,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                 );
                 return;
               }
-              
+
               Navigator.of(ctx).pop();
               await _saveTemplate(name);
             },
@@ -524,16 +548,17 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            'Step 2: Draw 4 Boxes',
+            'Step 2: Draw 5 Boxes',
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Color(0xFFFF6B35)),
           ),
           const SizedBox(height: 12),
           Text(
-            'Create 4 boxes on the receipt image. They must NOT overlap and should be arranged from top to bottom:\n\n'
-            '🔴 RED: Company Name\n'
-            '🔵 BLUE: Date of Purchase\n'
+            'Create 5 boxes on the receipt image. They must NOT overlap and should be arranged from top to bottom:\n\n'
+            '⬛ BLACK: Supplier Name (MANUAL - type the name, not OCR)\n'
+            '🔴 RED: Invoice Number\n'
+            '🔵 BLUE: Invoice Date\n'
             '🟡 YELLOW: Purchase Items (ROI Fields)\n'
-            '🟢 GREEN: Total Amount',
+            '🟢 GREEN: Grand Total',
             style: TextStyle(fontSize: 14, color: Colors.grey[700]),
           ),
           const SizedBox(height: 24),
@@ -557,9 +582,9 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
           
           Center(
             child: ElevatedButton.icon(
-              onPressed: _openFourBoxEditor,
+              onPressed: _openFiveBoxEditor,
               icon: const Icon(Icons.edit),
-              label: const Text('Open Box Editor'),
+              label: const Text('Open 5-Box Editor'),
               style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFFF6B35),
                 foregroundColor: Colors.white,
@@ -607,7 +632,25 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
               ),
             ),
 
-            // RED Box
+            // BLACK Box (Supplier Name - topmost)
+            if (_blackBox != Rect.zero)
+              Positioned(
+                left: offsetX + _blackBox.left * scale,
+                top: offsetY + _blackBox.top * scale,
+                width: _blackBox.width * scale,
+                height: _blackBox.height * scale,
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.black, width: 2),
+                    color: Colors.black.withOpacity(0.1),
+                  ),
+                  child: const Center(
+                    child: Text('BLACK\n(Supplier)', style: TextStyle(fontSize: 12, color: Colors.black, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
+                  ),
+                ),
+              ),
+
+            // RED Box (Invoice Number)
             if (_redBox != Rect.zero)
               Positioned(
                 left: offsetX + _redBox.left * scale,
@@ -620,7 +663,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                     color: Colors.red.withOpacity(0.1),
                   ),
                   child: const Center(
-                    child: Text('RED', style: TextStyle(fontSize: 14, color: Colors.red, fontWeight: FontWeight.bold)),
+                    child: Text('RED\n(Invoice#)', style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.bold), textAlign: TextAlign.center),
                   ),
                 ),
               ),
@@ -908,19 +951,21 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
 
 // ── Helper Classes ──
 
-class _FourBoxResult {
-  final Rect red;
-  final Rect blue;
-  final Rect yellow;
-  final Rect green;
-  final String redExpectedText;
+class _FiveBoxResult {
+  final Rect black;   // Supplier Name (manual)
+  final Rect red;     // Invoice Number
+  final Rect blue;    // Invoice Date
+  final Rect yellow;  // Items
+  final Rect green;   // Grand Total
+  final String supplierName; // From BLACK box manual entry
 
-  _FourBoxResult({
+  _FiveBoxResult({
+    required this.black,
     required this.red,
     required this.blue,
     required this.yellow,
     required this.green,
-    required this.redExpectedText,
+    required this.supplierName,
   });
 }
 
@@ -936,17 +981,19 @@ class _ColumnLine {
   });
 }
 
-// ── Four Box Editor Screen ──
+// ── Five Box Editor Screen ──
 
-class _FourBoxEditorScreen extends StatefulWidget {
+class _FiveBoxEditorScreen extends StatefulWidget {
   final img.Image image;
+  final Rect initialBlack;
   final Rect initialRed;
   final Rect initialBlue;
   final Rect initialYellow;
   final Rect initialGreen;
 
-  const _FourBoxEditorScreen({
+  const _FiveBoxEditorScreen({
     required this.image,
+    required this.initialBlack,
     required this.initialRed,
     required this.initialBlue,
     required this.initialYellow,
@@ -954,21 +1001,24 @@ class _FourBoxEditorScreen extends StatefulWidget {
   });
 
   @override
-  State<_FourBoxEditorScreen> createState() => _FourBoxEditorScreenState();
+  State<_FiveBoxEditorScreen> createState() => _FiveBoxEditorScreenState();
 }
 
-class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
-  late Rect _red;
-  late Rect _blue;
-  late Rect _yellow;
-  late Rect _green;
+class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
+  late Rect _black;   // Supplier Name (manual entry)
+  late Rect _red;     // Invoice Number
+  late Rect _blue;    // Invoice Date
+  late Rect _yellow;  // Items
+  late Rect _green;   // Grand Total
   String? _selectedBox;
-  final _textController = TextEditingController();
+  final _supplierController = TextEditingController(); // For BLACK box
+  final _invoiceController = TextEditingController();  // For RED box
   late final Uint8List _cachedJpg; // encoded once, reused every frame
 
   @override
   void initState() {
     super.initState();
+    _black = widget.initialBlack;
     _red = widget.initialRed;
     _blue = widget.initialBlue;
     _yellow = widget.initialYellow;
@@ -978,7 +1028,8 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
 
   @override
   void dispose() {
-    _textController.dispose();
+    _supplierController.dispose();
+    _invoiceController.dispose();
     super.dispose();
   }
 
@@ -1079,7 +1130,8 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
                           gaplessPlayback: true,
                         ),
                       ),
-                      // Boxes
+                      // 5 Boxes: BLACK (Supplier), RED (Invoice#), BLUE (Date), YELLOW (Items), GREEN (Total)
+                      _buildBox('black', _black, displayedImg, Colors.black),
                       _buildBox('red', _red, displayedImg, Colors.red),
                       _buildBox('blue', _blue, displayedImg, Colors.blue),
                       _buildBox('yellow', _yellow, displayedImg, Colors.yellow[700]!),
@@ -1091,17 +1143,34 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
             ),
           ),
 
-          // RED box text input
+          // BLACK box text input (Supplier Name - manual entry)
+          if (_selectedBox == 'black')
+            Container(
+              padding: const EdgeInsets.all(12),
+              color: Colors.white,
+              child: TextField(
+                controller: _supplierController,
+                decoration: const InputDecoration(
+                  labelText: 'Supplier Name (MANUAL - not OCR)',
+                  hintText: 'e.g. ST ROSYAM MART SDN BHD',
+                  border: OutlineInputBorder(),
+                  helperText: 'This name will be used for all receipts using this template',
+                ),
+              ),
+            ),
+
+          // RED box text input (Invoice Number pattern)
           if (_selectedBox == 'red')
             Container(
               padding: const EdgeInsets.all(12),
               color: Colors.white,
               child: TextField(
-                controller: _textController,
+                controller: _invoiceController,
                 decoration: const InputDecoration(
-                  labelText: 'Company Name (for template matching)',
-                  hintText: 'e.g. ST ROSYAM MART',
+                  labelText: 'Invoice Number (optional pattern)',
+                  hintText: 'e.g. INV-2024-001',
                   border: OutlineInputBorder(),
+                  helperText: 'Optional: helps OCR identify invoice numbers',
                 ),
               ),
             ),
@@ -1253,8 +1322,10 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
   }
 
   void _onTapDown(Offset position, Rect displayedImg) {
-    // Check which box was tapped (in widget coords)
-    if (_containsPointWidget(_red, position, displayedImg)) {
+    // Check which box was tapped (in widget coords) - priority: black > red > blue > yellow > green
+    if (_containsPointWidget(_black, position, displayedImg)) {
+      _selectBox('black');
+    } else if (_containsPointWidget(_red, position, displayedImg)) {
       _selectBox('red');
     } else if (_containsPointWidget(_blue, position, displayedImg)) {
       _selectBox('blue');
@@ -1283,6 +1354,9 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
   void _moveBox(String id, Offset delta, Rect displayedImg) {
     setState(() {
       switch (id) {
+        case 'black':
+          _black = _shiftImgRect(_black, delta, displayedImg);
+          break;
         case 'red':
           _red = _shiftImgRect(_red, delta, displayedImg);
           break;
@@ -1307,6 +1381,7 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
       final dy = delta.dy * scaleY;
       Rect current;
       switch (id) {
+        case 'black': current = _black; break;
         case 'red': current = _red; break;
         case 'blue': current = _blue; break;
         case 'yellow': current = _yellow; break;
@@ -1360,12 +1435,13 @@ class _FourBoxEditorScreenState extends State<_FourBoxEditorScreen> {
   }
 
   void _save() {
-    Navigator.of(context).pop(_FourBoxResult(
+    Navigator.of(context).pop(_FiveBoxResult(
+      black: _black,
       red: _red,
       blue: _blue,
       yellow: _yellow,
       green: _green,
-      redExpectedText: _textController.text,
+      supplierName: _supplierController.text.trim(),
     ));
   }
 }

@@ -11,10 +11,11 @@ class ReceiptTemplate {
   DateTime updatedAt;
   String? masterImagePath;
 
-  // Three anchors
-  AnchorPoint? anchorA; // Fixed header anchor A (logo/name)
-  AnchorPoint? anchorB; // Fixed header anchor B (tax invoice/GST)
-  AnchorPoint? anchorC; // Dynamic footer anchor (Total/Subtotal)
+  // Four anchors + BLACK box (supplier name position reference)
+  AnchorPoint? anchorBlack; // BLACK: Supplier Name position (visual reference, not OCR)
+  AnchorPoint? anchorA;     // RED: Invoice Number
+  AnchorPoint? anchorB;     // BLUE: Invoice Date
+  AnchorPoint? anchorC;     // GREEN: Grand Total
 
   // Configured ROI fields
   List<FieldROI> fields;
@@ -39,6 +40,7 @@ class ReceiptTemplate {
     DateTime? createdAt,
     DateTime? updatedAt,
     this.masterImagePath,
+    this.anchorBlack,
     this.anchorA,
     this.anchorB,
     this.anchorC,
@@ -67,6 +69,7 @@ class ReceiptTemplate {
         'masterImagePath': masterImagePath,
         'masterWidth': masterWidth,
         'masterHeight': masterHeight,
+        'anchorBlack': anchorBlack?.toJson(),
         'anchorA': anchorA?.toJson(),
         'anchorB': anchorB?.toJson(),
         'anchorC': anchorC?.toJson(),
@@ -90,6 +93,9 @@ class ReceiptTemplate {
         masterImagePath: json['masterImagePath'] as String?,
         masterWidth: (json['masterWidth'] as num?)?.toDouble() ?? 0,
         masterHeight: (json['masterHeight'] as num?)?.toDouble() ?? 0,
+        anchorBlack: json['anchorBlack'] != null
+            ? AnchorPoint.fromJson(json['anchorBlack'] as Map<String, dynamic>)
+            : null,
         anchorA: json['anchorA'] != null
             ? AnchorPoint.fromJson(json['anchorA'] as Map<String, dynamic>)
             : null,
