@@ -144,7 +144,7 @@ class _HomeScreenState extends State<HomeScreen> {
             // only because of shared "sdn bhd" — that should NOT override.
             final tplLower = matchedTemplate.supplierName.toLowerCase();
             final detLower = detectedSupplier.toLowerCase();
-            final supplierSim = _templateService._fuzzyScore(detLower, tplLower);
+            final supplierSim = _templateService.similarityScore(detLower, tplLower);
             print('[TEMPLATE_MATCH] Receipt $i: Supplier similarity score=$supplierSim');
             if (matchedTemplate.supplierName.isNotEmpty && supplierSim >= 0.5) {
               data.supplier = matchedTemplate.supplierName;

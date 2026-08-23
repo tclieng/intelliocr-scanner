@@ -137,6 +137,12 @@ class TemplateService {
     return overlap / min(textTokens.length, targetTokens.length);
   }
 
+  /// Public wrapper for _fuzzyScore — computes similarity between two strings
+  /// using the same token-overlap algorithm. Returns 0..1.
+  double similarityScore(String text, String target) =>
+      _fuzzyScore(text, target);
+
+
   int _levenshtein(String a, String b) {
     if (a.isEmpty) return b.length;
     if (b.isEmpty) return a.length;
