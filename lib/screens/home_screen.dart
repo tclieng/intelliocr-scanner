@@ -100,7 +100,7 @@ class _HomeScreenState extends State<HomeScreen> {
             .replaceAll(RegExp(r'_scaled_\d+'), '')
             .replaceAll(RegExp(r'_proc$'), '')
             .replaceAll(RegExp(r'_scaled$'), '');
-        final data = _parseReceiptData(cleanFname, rawText);
+        final data = await _parseReceiptData(cleanFname, rawText);
 
         // ── Supplier-name-based template matching ──
         // OCR detects the supplier name from the receipt header, then we find
@@ -250,7 +250,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return bestAngle;
   }
 
-  ReceiptData _parseReceiptData(String filename, String rawText) {
+  Future<ReceiptData> _parseReceiptData(String filename, String rawText) async {
     final lines = rawText.split('\n').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
     final data = ReceiptData(filename: filename);
     if (lines.isEmpty) return data;
@@ -258,65 +258,102 @@ class _HomeScreenState extends State<HomeScreen> {
     final allText = rawText.toLowerCase();
 
     // Smart supplier detection: skip lines that look like receipt numbers/dates
-    final knownSuppliers = [
-      'qq mee', 'mee stall', 'restoran', 'cafe', 'sdn bhd', 'enterprise', 'kopitiam',
-      'majestic', 'majestik', 'ong tai', 'ong tai', 'kk', 'sin', 'heng', 'sdn', 'bhd',
-      'enterprise', 'supermarket', 'mart', 'shop', 'store', 'bakeri', 'bakery',
+    // HIGH-CONFIDENCE keywords: these are specific enough to avoid false positives
+    final highConfidenceSuppliers = [
+      'qq mee', 'mee stall', 'restoran', 'kopitiam',
+      'majestic', 'majestik', 'ong tai', 'kk', 'sin', 'heng',
+      'supermarket', 'mart', 'shop', 'store', 'bakeri', 'bakery',
       'tasty', 'poh', 'ayam', 'milo', 'noodle', 'noodles', 'food', 'restaurant',
-      'atas frozen', 'top frozen',
+      'atas frozen', 'top frozen', 'frozen', 'taste good', 'jms',
     ];
+    // LOW-CONFIDENCE keywords: generic Malaysian company suffixes — only use if
+    // the line also contains a high-confidence word OR matches a template name
+    final genericSuffixes = ['sdn bhd', 'enterprise', 'sendirian', 'berhad', 's/b', 'limited', 'ltd'];
+
     String? detectedSupplier;
-    for (final line in lines.take(20)) {
-      final lower = line.toLowerCase();
+    final List<String> candidateLines = [];
+
+    for (final line in lines.take(25)) {
+      final lower = line.toLowerCase().trim();
       // Skip obvious non-supplier lines
       if (RegExp(r'^\d+$').hasMatch(line)) continue;
       if (RegExp(r'^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}').hasMatch(line)) continue;
       if (RegExp(r'^\d{1,2}:\d{2}').hasMatch(line)) continue;
-      // Address lines (contain words like jalan, street, avenue, postcode, lot)
-      if (RegExp(r'(?:jalan|jln|street|avenue|taman|kawasan|lot|no\.?|persiaran)\b', caseSensitive: false).hasMatch(lower)) continue;
-      // City/zip lines (digits + words typical of postcodes, e.g. "43500 SENAW...")
+      if (RegExp(r'(?:jalan|jln|street|avenue|taman|kawasan|lot|no\.?|persiaran|blk|block)\b', caseSensitive: false).hasMatch(lower)) continue;
       if (RegExp(r'^\d{4,6}\s').hasMatch(line)) continue;
       if (lower.contains('receipt') && lower.length < 25) continue;
       if (lower.contains('invoice') && lower.length < 35) continue;
       if (RegExp(r'^[a-z]?\d{4,}', caseSensitive: false).hasMatch(line)) continue;
       if (RegExp(r'^\([\w\u00C0-\u024F]+\)', caseSensitive: false).hasMatch(line)) continue;
       if (line.length < 3) continue;
-      for (final kw in knownSuppliers) {
+      if (RegExp(r'^[\d\s\-_.,:()]+$').hasMatch(line)) continue;
+
+      // Collect all candidate lines for later fuzzy matching against templates
+      candidateLines.add(line.trim());
+
+      // Priority 1: High-confidence keyword match
+      for (final kw in highConfidenceSuppliers) {
         if (lower.contains(kw)) {
           detectedSupplier = line.trim();
+          print('[SUPPLIER] High-confidence match: "$detectedSupplier" (keyword: $kw)');
           break;
         }
       }
-      if (detectedSupplier != null) {
-        // Try to extend with next line if it looks like part of company name
-        // (contains MARKETING, SDN, BHD, ENTERPRISE, etc.)
-        final idx = lines.indexOf(line);
-        if (idx >= 0 && idx + 1 < lines.length) {
-          final nextLine = lines[idx + 1].trim();
-          final nextLower = nextLine.toLowerCase();
-          if (nextLine.length > 2 &&
-              (nextLower.contains('marketing') ||
-               nextLower.contains('sdn') ||
-               nextLower.contains('bhd') ||
-               nextLower.contains('enterprise') ||
-               nextLower.contains('sendirian') ||
-               nextLower.contains('berhad') ||
-               nextLower.contains('s/b') ||
-               nextLower.contains('limited') ||
-               nextLower.contains('ltd')) &&
-              !RegExp(r'^\d+$').hasMatch(nextLine) &&
-              !RegExp(r'^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}').hasMatch(nextLine)) {
-            detectedSupplier = '$detectedSupplier $nextLine';
-            print('[SUPPLIER] Extended company name: "$detectedSupplier"');
-          }
-        }
-        break;
+      if (detectedSupplier != null) break;
+
+      // Priority 2: Generic suffix ONLY if line also has a non-generic word (>3 chars, not in suffix list)
+      bool hasGenericSuffix = false;
+      for (final suffix in genericSuffixes) {
+        if (lower.contains(suffix)) { hasGenericSuffix = true; break; }
       }
-      if (!RegExp(r'^[\d\s\-_.,:()]+$').hasMatch(line)) {
-        detectedSupplier ??= line.trim();
+      if (hasGenericSuffix) {
+        // Check if line has at least one "real" word (not a generic suffix/component)
+        final words = lower.split(RegExp(r'[\s\(\)]+')).where((w) => w.length > 2).toList();
+        final realWords = words.where((w) =>
+          !genericSuffixes.any((s) => w.contains(s)) &&
+          w != 'sdn' && w != 'bhd' && w != 's' && w != 'b' &&
+          w != 'marketing' && w != 'enterprise' && w != 'sendirian' && w != 'berhad'
+        ).toList();
+        if (realWords.isNotEmpty) {
+          detectedSupplier = line.trim();
+          print('[SUPPLIER] Generic-suffix match: "$detectedSupplier" (real words: $realWords)');
+          break;
+        }
       }
     }
+
+    // Priority 3: Fuzzy match against existing template names
+    if (detectedSupplier == null && candidateLines.isNotEmpty) {
+      final templates = await _templateService.getTemplates();
+      if (templates.isNotEmpty) {
+        String? bestMatch;
+        double bestScore = 0;
+        for (final candidate in candidateLines) {
+          final candLower = candidate.toLowerCase();
+          for (final tpl in templates) {
+            final score = _templateService.similarityScore(candLower, tpl.supplierName.toLowerCase());
+            print('[SUPPLIER] Fuzzy candidate: "$candidate" vs template "${tpl.supplierName}" = $score');
+            if (score > bestScore && score >= 0.4) {
+              bestScore = score;
+              bestMatch = tpl.supplierName;
+            }
+          }
+        }
+        if (bestMatch != null) {
+          detectedSupplier = bestMatch;
+          print('[SUPPLIER] Fuzzy matched to template: "$detectedSupplier" (score=$bestScore)');
+        }
+      }
+    }
+
+    // Priority 4: Fallback to first candidate line (weaker)
+    if (detectedSupplier == null && candidateLines.isNotEmpty) {
+      detectedSupplier = candidateLines.first;
+      print('[SUPPLIER] Fallback to first candidate: "$detectedSupplier"');
+    }
+
     data.supplier = detectedSupplier ?? lines.first;
+    print('[SUPPLIER] Final supplier: "${data.supplier}"');
 
     for (final line in lines) {
       final m = RegExp(r'(\d{4}[-/.]\d{1,2}[-/.]\d{1,2})').firstMatch(line);
