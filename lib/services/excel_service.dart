@@ -76,7 +76,12 @@ class ExcelService {
     final supplierGroups = <String, List<ReceiptData>>{};
     for (final r in receipts) {
       final name = r.supplier.isNotEmpty ? r.supplier : 'Unknown Supplier';
+      print('[EXCEL_GROUP] Receipt ${r.filename} -> supplier="$name"');
       supplierGroups.putIfAbsent(name, () => []).add(r);
+    }
+    print('[EXCEL_GROUP] Total groups: ${supplierGroups.length}');
+    for (final e in supplierGroups.entries) {
+      print('[EXCEL_GROUP]   "${e.key}": ${e.value.length} receipts');
     }
 
     final itemHeaders = [

@@ -105,12 +105,13 @@ class _HomeScreenState extends State<HomeScreen> {
         // the best-matching template by supplier name (not by anchor text,
         // which changes per receipt and never matches).
         final detectedSupplier = data.supplier;
+        print('[TEMPLATE_MATCH] Receipt $i: OCR detected supplier="$detectedSupplier"');
         ReceiptTemplate? matchedTemplate =
             _templateService.findBestTemplateByHeader(detectedSupplier,
                 threshold: 0.4);
 
         if (matchedTemplate != null) {
-          debugPrint('Matched template: ${matchedTemplate.supplierName} (score OK)');
+          print('[TEMPLATE_MATCH] Receipt $i: Matched template="${matchedTemplate.supplierName}"');
           try {
             final enhanced = await _matchEngine.extractWithTemplate(
               matchedTemplate,
@@ -138,12 +139,13 @@ class _HomeScreenState extends State<HomeScreen> {
             // Only override if template matched — keep per-receipt supplier otherwise
             if (matchedTemplate.supplierName.isNotEmpty) {
               data.supplier = matchedTemplate.supplierName;
+              print('[TEMPLATE_MATCH] Receipt $i: Final supplier set to template name="${data.supplier}"');
             }
           } catch (e) {
             debugPrint('Template extraction error: $e');
           }
         } else {
-          debugPrint('No template matched for supplier: "$detectedSupplier"');
+          print('[TEMPLATE_MATCH] Receipt $i: No template matched for "$detectedSupplier"');
         }
 
         _results.add(data);
