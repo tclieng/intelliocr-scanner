@@ -110,7 +110,7 @@ class _HomeScreenState extends State<HomeScreen> {
         print('[TEMPLATE_MATCH] Receipt $i: OCR detected supplier="$detectedSupplier"');
         ReceiptTemplate? matchedTemplate =
             _templateService.findBestTemplateByHeader(detectedSupplier,
-                threshold: 0.4);
+                threshold: 0.5);
 
         if (matchedTemplate != null) {
           print('[TEMPLATE_MATCH] Receipt $i: Matched template="${matchedTemplate.supplierName}"');
@@ -138,10 +138,19 @@ class _HomeScreenState extends State<HomeScreen> {
             data.confidence = enhanced.confidence;
             data.isValidated = enhanced.isValidated;
             // Use matched template's supplier name for Excel export
-            // Only override if template matched — keep per-receipt supplier otherwise
-            if (matchedTemplate.supplierName.isNotEmpty) {
+            // CONDITIONAL FIX (v17): Only override if the template's supplier name
+            // actually resembles the detected text — NOT just from generic tokens like
+            // "sdn bhd". E.g. "atas frozen marketing sdn bhd" scored 0.4 vs ST ROSYAM
+            // only because of shared "sdn bhd" — that should NOT override.
+            final tplLower = matchedTemplate.supplierName.toLowerCase();
+            final detLower = detectedSupplier.toLowerCase();
+            final supplierSim = _templateService._fuzzyScore(detLower, tplLower);
+            print('[TEMPLATE_MATCH] Receipt $i: Supplier similarity score=$supplierSim');
+            if (matchedTemplate.supplierName.isNotEmpty && supplierSim >= 0.5) {
               data.supplier = matchedTemplate.supplierName;
               print('[TEMPLATE_MATCH] Receipt $i: Final supplier set to template name="${data.supplier}"');
+            } else {
+              print('[TEMPLATE_MATCH] Receipt $i: Skipped override — template supplier may be wrong (similarity=$supplierSim < 0.5)');
             }
           } catch (e) {
             debugPrint('Template extraction error: $e');
