@@ -229,6 +229,8 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
 
       // BLACK box - Supplier Name anchor (stored but not used for OCR)
       _template.anchorBlack = AnchorPoint(
+        id: 'black_${DateTime.now().millisecondsSinceEpoch}',
+        label: 'BLACK - Supplier Name',
         type: 'black',
         roi: _blackBox,
         expectedText: _supplierFromBlackBox,
