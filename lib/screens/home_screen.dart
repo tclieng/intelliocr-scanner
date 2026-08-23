@@ -287,7 +287,31 @@ class _HomeScreenState extends State<HomeScreen> {
           break;
         }
       }
-      if (detectedSupplier != null) break;
+      if (detectedSupplier != null) {
+        // Try to extend with next line if it looks like part of company name
+        // (contains MARKETING, SDN, BHD, ENTERPRISE, etc.)
+        final idx = lines.indexOf(line);
+        if (idx >= 0 && idx + 1 < lines.length) {
+          final nextLine = lines[idx + 1].trim();
+          final nextLower = nextLine.toLowerCase();
+          if (nextLine.length > 2 &&
+              (nextLower.contains('marketing') ||
+               nextLower.contains('sdn') ||
+               nextLower.contains('bhd') ||
+               nextLower.contains('enterprise') ||
+               nextLower.contains('sendirian') ||
+               nextLower.contains('berhad') ||
+               nextLower.contains('s/b') ||
+               nextLower.contains('limited') ||
+               nextLower.contains('ltd')) &&
+              !RegExp(r'^\d+$').hasMatch(nextLine) &&
+              !RegExp(r'^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}').hasMatch(nextLine)) {
+            detectedSupplier = '$detectedSupplier $nextLine';
+            print('[SUPPLIER] Extended company name: "$detectedSupplier"');
+          }
+        }
+        break;
+      }
       if (!RegExp(r'^[\d\s\-_.,:()]+$').hasMatch(line)) {
         detectedSupplier ??= line.trim();
       }
