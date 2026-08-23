@@ -90,6 +90,8 @@ class _HomeScreenState extends State<HomeScreen> {
         final h = src?.height.toDouble() ?? 1000;
 
         final rawText = await _ocr.recognizeText(originalFile);
+        final rawPreview = rawText.substring(0, min(300, rawText.length)).replaceAll('\n', ' | ');
+        print('[OCR_RAW][$i] $rawPreview');
         debugPrint('OCR_RAW[${i}]: ${rawText.substring(0, min(200, rawText.length))}...');
         final rawFname = _captures[i].uri.pathSegments.last;
         // Clean internal prefixes for display: CAP_{timestamp}_{basename}

@@ -87,6 +87,7 @@ class TemplateService {
 
     ReceiptTemplate? best;
     double bestScore = 0;
+    String bestScoreDetail = '';
     for (final tpl in _templates) {
       if (!tpl.isComplete) continue;
       final name = tpl.supplierName.toLowerCase();
@@ -95,10 +96,18 @@ class TemplateService {
       final scoreAnchor =
           anchor.isNotEmpty ? _fuzzyScore(text, anchor) : 0.0;
       final score = scoreName >= scoreAnchor ? scoreName : scoreAnchor;
+      final detail = scoreName >= scoreAnchor
+          ? 'name=$scoreName (text="$text" vs name="$name")'
+          : 'anchor=$scoreAnchor (text="$text" vs anchor="$anchor")';
+      print('[TEMPLATE_SCORING] Template "${tpl.supplierName}": $detail');
       if (score > bestScore) {
         bestScore = score;
         best = tpl;
+        bestScoreDetail = detail;
       }
+    }
+    if (best != null) {
+      print('[TEMPLATE_SCORING] Best match: "${best.supplierName}" score=$bestScore $bestScoreDetail >= threshold $threshold? ${bestScore >= threshold}');
     }
     return bestScore >= threshold ? best : null;
   }
