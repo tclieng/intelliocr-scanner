@@ -88,6 +88,10 @@ class MatchEngine {
 
   final OcrService _ocr = OcrService();
 
+  // State for merged-description recovery (reset per receipt in _extractYellowBox)
+  int _itemRowCount = 0;
+  final Set<int> _usedPartIndices = {};
+
   // ── Block extraction ──
 
   Future<List<OcrBlock>> _getBlocks(File imageFile) async {
@@ -521,6 +525,9 @@ class MatchEngine {
     double? anchorCY,
   ) async {
     final items = <ItemRow>[];
+    // Reset merged-description recovery state
+    _itemRowCount = 0;
+    _usedPartIndices.clear();
     print('[YELLOW_EXTRACT] roi=${cfg.roi} columns=${cfg.columns.length} detectRowsBySubtotal=${cfg.detectRowsBySubtotal}');
 
     final mappedYellow = match.mapRoi(cfg.roi);
@@ -883,6 +890,21 @@ class MatchEngine {
 
         final descText = descParts.join(' ').trim();
 
+        // Guard: "2000 UNIT" → qty=2000 skipped by _moneyCell (>=1000 digit run).
+        // But "2000" in a UOM context is actually the qty (e.g. 2.000 kg).
+        // If decs has only one value and it's large (>= 100), check if there's
+        // a UOM token in descParts and treat it as the actual amount (qty=1).
+        // This handles the case where "2.000 UNIT" was split into "2000 UNIT"
+        // by OCR (2 → 2000 digit corruption).
+        if (decs.length == 1 &&
+            decs.first.value >= 100 &&
+            descParts.any((p) => RegExp(r'\b(KG|KGM|G|GM|GR|GMS|L|LT|ML|LTR|PCS|PC|UNIT)\b', caseSensitive: false).hasMatch(p))) {
+          print('[YELLOW] Large single dec ${decs.first.value} >= 100 in UOM context — treating as qty=1, unitPrice=0');
+          qty = 1;
+          amount = 0;
+          decs.clear();
+        }
+
         if (amount <= 0 && requireAmount) {
           // No amount on this row → treat as a description continuation (wrapped
           // name, barcode line, or column header). Buffer it for the next amount.
@@ -898,6 +920,9 @@ class MatchEngine {
 
         // Amount row — merge any buffered leading description lines.
         var finalDesc = descText;
+        // Track item row index within this finalRows entry so we can pick the
+        // right description chunk from merged-OCR text.
+        final itemRowIdx = _itemRowCount;
         if (pendingDesc.isNotEmpty) {
           finalDesc = finalDesc.isEmpty ? pendingDesc : '$pendingDesc $finalDesc';
           pendingDesc = '';
@@ -909,8 +934,44 @@ class MatchEngine {
           return !uomRe.hasMatch(p);
         }).toList();
         finalDesc = _cleanItemDescription(cleanedParts.join(' ')).trim();
-        if (finalDesc.isEmpty) continue;
-        if (_isNonItemText(finalDesc.toLowerCase())) continue;
+        // If description is missing or clearly non-item, try to recover it from
+        // the merged description block. JMS receipts OCR-merge all 3 product names
+        // into one block ("FARMFRITES...KGX6...WESTGOLD..."). Split by product
+        // name boundaries and pick the chunk that matches this row's item index.
+        if (finalDesc.isEmpty || _isNonItemText(finalDesc.toLowerCase())) {
+          final mergedText = row.map((b) => b.text).join(' ');
+          final parts = mergedText
+              .split(RegExp(r'\s+(?=[A-Z][A-Z0-9]{2,})\s*'))
+              .map((s) => s.trim())
+              .where((s) => s.length > 5)
+              .toList();
+          if (parts.length > 1) {
+            // Pick part by item row index (cyclically), preferring unused parts
+            // first. If all parts used, fall back to cycling.
+            int idx = itemRowIdx % parts.length;
+            if (!_usedPartIndices.isEmpty) {
+              // Try to find an unused index close to the expected position
+              final remaining = <int>[];
+              for (int i = 0; i < parts.length; i++) {
+                if (!_usedPartIndices.contains(i)) remaining.add(i);
+              }
+              if (remaining.isNotEmpty) {
+                // Find remaining index closest to itemRowIdx
+                remaining.sort((a, b) =>
+                    ((a - idx).abs()).compareTo((b - idx).abs()));
+                idx = remaining.first;
+              }
+            }
+            _usedPartIndices.add(idx);
+            final candDesc = _cleanItemDescription(parts[idx]);
+            if (candDesc.isNotEmpty && !_isNonItemText(candDesc.toLowerCase())) {
+              finalDesc = candDesc;
+              print('[YELLOW] Desc recovered: idx=$idx "$finalDesc"');
+            }
+          }
+        }
+        // Final filter: skip only if no valid description AND no amount
+        if (finalDesc.isEmpty && amount <= 0) continue;
 
         final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0.0);
 
