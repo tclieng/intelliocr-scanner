@@ -11,7 +11,7 @@ import '../models/receipt_template.dart';
 import '../models/anchor_point.dart';
 import '../models/field_roi.dart';
 
-/// New Template Wizard ΓÇö 4 Steps
+/// New Template Wizard �ö 4 Steps
 /// Step 1: Capture Master Receipt
 /// Step 2: Draw 5 Boxes (BLACK, RED, BLUE, YELLOW, GREEN)
 class NewTemplateWizard extends StatefulWidget {
@@ -52,7 +52,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     _template = ReceiptTemplate(id: id, supplierName: '');
   }
 
-  // ΓöÇΓöÇ Navigation ΓöÇΓöÇ
+  // ─ Navigation ─
 
   void _nextStep() {
     if (_currentStep < 2) setState(() => _currentStep++);
@@ -84,7 +84,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
       
       _supplierFromBlackBox.trim().isNotEmpty;
 
-  // ΓöÇΓöÇ Step 1: Capture Master Receipt ΓöÇΓöÇ
+  // ─ Step 1: Capture Master Receipt ─
 
   Future<void> _captureMaster() async {
     final photo = await _picker.pickImage(
@@ -165,7 +165,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     });
   }
 
-  // ΓöÇΓöÇ Step 2: Draw 5 Boxes (BLACK, RED, BLUE, YELLOW, GREEN) ΓöÇΓöÇ
+  // ─ Step 2: Draw 5 Boxes (BLACK, RED, BLUE, YELLOW, GREEN) ─
 
   Future<void> _openFiveBoxEditor() async {
     if (_processedImage == null) return;
@@ -241,7 +241,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
         columns: [],
       );
       
-      // Initialize vertical lines for Step 3
+          // Confirm supplier name from BLACK box
     });
     
     // Perform OCR on BLACK box to get supplier name
@@ -340,30 +340,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     );
   }
 
-
-  // ΓöÇΓöÇ Step 3: Define Columns ΓöÇΓöÇ
-
-
-
-      columns.add(YellowBoxColumn(
-        id: 'col_$i',
-        name: name,
-        displayName: displayName,
-        x: left,
-        width: width,
-        order: i,
-      ));
-    }
-
-    _template.yellowBoxConfig = YellowBoxConfig(
-      id: 'yellow_${DateTime.now().millisecondsSinceEpoch}',
-      roi: _yellowBox,
-      columns: columns,
-      detectRowsBySubtotal: true,
-    );
-  }
-
-  // ΓöÇΓöÇ Step 4: Save ΓöÇΓöÇ
+  // ─ Step 3: Save Template ─
 
   void _showSaveDialog() {
     // Use supplier name from BLACK box if available, otherwise empty
@@ -439,7 +416,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     }
   }
 
-  // ΓöÇΓöÇ Build UI ΓöÇΓöÇ
+  // ─ Build UI ─
 
   @override
   Widget build(BuildContext context) {
@@ -856,7 +833,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
           if (_currentStep > 0)
             OutlinedButton(
               onPressed: _prevStep,
-              child: const Text('ΓåÉ Back'),
+              child: const Text('�É Back'),
             ),
           const Spacer(),
           if (_currentStep < 2)
@@ -866,7 +843,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                 backgroundColor: const Color(0xFFFF6B35),
                 foregroundColor: Colors.white,
               ),
-              child: const Text('Next ΓåÆ'),
+              child: const Text('Next �Æ'),
             ),
         ],
       ),
@@ -874,7 +851,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
   }
 }
 
-// ΓöÇΓöÇ Helper Classes ΓöÇΓöÇ
+// ─ Helper Classes ─
 
 class _FiveBoxResult {
   final Rect black;   // Supplier Name position (OCR will read from here)
@@ -892,7 +869,7 @@ class _FiveBoxResult {
   });
 }
 
-// ΓöÇΓöÇ Five Box Editor Screen ΓöÇΓöÇ
+// ─ Five Box Editor Screen ─
 
 class _FiveBoxEditorScreen extends StatefulWidget {
   final img.Image image;
@@ -1120,7 +1097,7 @@ class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
     final widgetRect = _imgToWidget(imgRect, displayedImg);
     final isSelected = _selectedBox == id;
 
-    // 20px transparent grab margin ΓÇö big hit area without changing visible box
+    // 20px transparent grab margin �ö big hit area without changing visible box
     const double kGrabMargin = 20;
 
     return Positioned(
@@ -1142,7 +1119,7 @@ class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
             ),
           ),
           // Visible box body (centered inside grab ring)
-          // NO GestureDetector here ΓÇö the outer grab ring handles tap/pan for
+          // NO GestureDetector here �ö the outer grab ring handles tap/pan for
           // the whole area. Having an inner GestureDetector consumed the touch
           // before the outer move detector could start a pan gesture.
           Positioned(
@@ -1185,7 +1162,7 @@ class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
               ),
             ),
           ),
-          // Resize handles ΓÇö placed in OUTER Stack so they aren't clipped
+          // Resize handles �ö placed in OUTER Stack so they aren't clipped
           // by the visible box's Container decoration. Use IgnorePointer on
           // the move detector so handle hit-testing wins; handles are drawn
           // last so they appear on top.
@@ -1380,5 +1357,5 @@ class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
   }
 }
 
-// ΓöÇΓöÇ Column Editor Screen ΓöÇΓöÇ
+// ─ Column Editor Screen ─
 
