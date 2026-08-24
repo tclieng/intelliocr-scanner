@@ -706,6 +706,15 @@ class MatchEngine {
             if (p != null && p > 0) pqPrice = p;
             if (q != null && q > 0) pqQty = q;
             if (pqQty > 999) pqQty = 1; // guard against barcode-as-quantity (e.g. 201503)
+            // FIX: If pqQty > 20, it's likely an OCR fragment. "12.90" split into
+            // "12." and "90" → pqPattern matches "12." as price=12, and the "90"
+            // text block is misread as qty=90. An impossible qty for a grocery item.
+            // Reset to 1 so we fall through to the decs-based path instead.
+            if (pqQty > 20) {
+              print('[YELLOW] pqQty=$pqQty implausible — OCR likely split price, resetting qty to 1');
+              pqQty = 1;
+              pqPrice = 0; // also clear price so we use decs path
+            }
             continue;
           }
 
@@ -720,6 +729,19 @@ class MatchEngine {
             final v = _moneyCell(t);
             if (v > 0) decs.add(_Dec(b.centerX, v));
             continue;
+          }
+
+          // Parse UOM from "qty uom" patterns like "1.000 UNIT" or "1 KG"
+          final uomMatch = RegExp(r'^(?:\d[\d.,]*\s+)?([A-Za-z]{2,6})$').firstMatch(t);
+          if (uomMatch != null) {
+            final possibleUom = uomMatch.group(1)!.toUpperCase();
+            final uomRe = RegExp(r'\b(KG|KGM|G|GM|GR|GMS|L|LT|ML|LTR|PCS|PC|EA|EACH|UNIT|SET|PKT|PACKET|BTL|BOTTLE|CAN|BOX|DOZ|DRM|ROLL|SLICE|SQFT|M|CM|MM)\b', caseSensitive: false);
+            if (uomRe.hasMatch(possibleUom)) {
+              // Found a UOM token — store it in descParts temporarily so it
+              // survives row merging, but don't treat it as a description.
+              descParts.add(possibleUom);
+              continue;
+            }
           }
 
           // Plain text → description.
@@ -793,24 +815,28 @@ class MatchEngine {
           pendingDesc = '';
         }
 
-        finalDesc = _cleanItemDescription(finalDesc).trim();
+        // Remove UOM tokens from description (they were captured separately above)
+        final cleanedParts = descParts.where((p) {
+          final uomRe = RegExp(r'\b(KG|KGM|G|GM|GR|GMS|L|LT|ML|LTR|PCS|PC|EA|EACH|UNIT|SET|PKT|PACKET|BTL|BOTTLE|CAN|BOX|DOZ|DRM|ROLL|SLICE|SQFT|M|CM|MM)\b', caseSensitive: false);
+          return !uomRe.hasMatch(p);
+        }).toList();
+        finalDesc = _cleanItemDescription(cleanedParts.join(' ')).trim();
         if (finalDesc.isEmpty) continue;
         if (_isNonItemText(finalDesc.toLowerCase())) continue;
 
         final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0.0);
 
-        // Best-effort UOM detection from row text (KG, L, PCS, ...)
+        // UOM: already parsed above from "qty uom" blocks (e.g. "1.000 UNIT")
+        // and collected in descParts. Extract it from there.
         String uom = '';
-      final uomRe = RegExp(
-          r'\b(KG|KGM|G|GM|GR|GMS|L|LT|ML|LTR|PCS|PC|EA|EACH|UNIT|SET|PKT|PACKET|BTL|BOTTLE|CAN|BOX|DOZ|DRM|ROLL|SLICE|SQFT|M|CM|MM)\b',
-          caseSensitive: false);
-      for (final b in subRow) {
-        final um = uomRe.firstMatch(b.text.trim());
-        if (um != null) {
-          uom = um.group(1)!.toUpperCase();
-          break;
+        for (final token in descParts) {
+          final uomRe = RegExp(r'\b(KG|KGM|G|GM|GR|GMS|L|LT|ML|LTR|PCS|PC|EA|EACH|UNIT|SET|PKT|PACKET|BTL|BOTTLE|CAN|BOX|DOZ|DRM|ROLL|SLICE|SQFT|M|CM|MM)\b', caseSensitive: false);
+          final um = uomRe.firstMatch(token);
+          if (um != null) {
+            uom = um.group(1)!.toUpperCase();
+            break;
+          }
         }
-      }
 
       print('[YELLOW] Adding item: qty=$qty desc="$finalDesc" uom="$uom" unitPrice=$unitPrice amount=$amt');
       items.add(ItemRow(
