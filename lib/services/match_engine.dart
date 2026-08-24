@@ -642,6 +642,54 @@ class MatchEngine {
     }
     print('[YELLOW] Merged into ${mergedRows.length} rows');
 
+    // ── FIX for JMS / invoice-style receipts: split rows that were merged
+    // because of small Y gaps between adjacent items. Detection: if a row has
+    // >= 4 standalone decimals and no price*qty pattern, it likely contains
+    // multiple items stacked. Look for Y-gaps BETWEEN consecutive numeric
+    // blocks that exceed the within-row tolerance — those gaps indicate
+    // a new item.
+    final splitRows = <List<OcrBlock>>[];
+    for (final row in mergedRows) {
+      // Only attempt split if row has many blocks
+      if (row.length < 6) {
+        splitRows.add(row);
+        continue;
+      }
+      // Sort by Y to find vertical gaps
+      final sorted = List<OcrBlock>.from(row)..sort((a, b) => a.y.compareTo(b.y));
+      // Compute average block height
+      final avgH = sorted.fold<double>(0, (s, b) => s + b.height) / sorted.length;
+      // Find Y-gaps: between consecutive blocks, gap > 1.2 * avgH means new item
+      final groups = <List<OcrBlock>>[];
+      var currentGroup = <OcrBlock>[sorted.first];
+      for (int i = 1; i < sorted.length; i++) {
+        final prev = sorted[i - 1];
+        final curr = sorted[i];
+        // Use BOTTOM of prev to TOP of curr as gap measure
+        final gap = curr.y - (prev.y + prev.height);
+        if (gap > avgH * 0.4) {
+          // New item line
+          if (currentGroup.isNotEmpty) groups.add(currentGroup);
+          currentGroup = [curr];
+        } else {
+          currentGroup.add(curr);
+        }
+      }
+      if (currentGroup.isNotEmpty) groups.add(currentGroup);
+      if (groups.length > 1) {
+        // Re-sort each group left-to-right
+        for (final g in groups) {
+          g.sort((a, b) => a.x.compareTo(b.x));
+        }
+        print('[YELLOW] Split merged row of ${row.length} blocks into ${groups.length} items (Y-gap detection)');
+        splitRows.addAll(groups);
+      } else {
+        splitRows.add(row);
+      }
+    }
+    final finalRows = splitRows;
+    print('[YELLOW] After Y-gap split: ${finalRows.length} rows');
+
     // ── Column-independent row extraction ──
     // We no longer rely on a fixed "amount" column (which is fragile when the
     // YELLOW box has a right margin or amounts fall just inside its edge).
@@ -652,7 +700,7 @@ class MatchEngine {
     String pendingDesc = '';
     final requireAmount = cfg.detectRowsBySubtotal;
 
-    for (final row in mergedRows) {
+    for (final row in finalRows) {
       // Collect all blocks in this row, sorted left-to-right
       final sortedRow = List<OcrBlock>.from(row)..sort((a, b) => a.x.compareTo(b.x));
       
