@@ -11,7 +11,7 @@ import '../models/receipt_template.dart';
 import '../models/anchor_point.dart';
 import '../models/field_roi.dart';
 
-/// New Template Wizard �ö 4 Steps
+/// New Template Wizard �ö 4 Steps
 /// Step 1: Capture Master Receipt
 /// Step 2: Draw 5 Boxes (BLACK, RED, BLUE, YELLOW, GREEN)
 class NewTemplateWizard extends StatefulWidget {
@@ -764,6 +764,8 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                   const Divider(),
                   const SizedBox(height: 8),
                   _buildSummaryRow('BLACK Box (Supplier)', _blackBox != Rect.zero ? 'SET' : 'NOT SET'),
+                  _buildSummaryRow('Supplier Name (OCR)', _supplierFromBlackBox.isNotEmpty ? _supplierFromBlackBox : 'NOT SET'),
+                  const SizedBox(height: 8),
                   _buildSummaryRow('RED Box (Invoice #)', _redBox != Rect.zero ? 'SET' : 'NOT SET'),
                   _buildSummaryRow('BLUE Box (Date)', _blueBox != Rect.zero ? 'SET' : 'NOT SET'),
                   _buildSummaryRow('YELLOW Box (Items)', _yellowBox != Rect.zero ? 'SET' : 'NOT SET'),
@@ -833,7 +835,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
           if (_currentStep > 0)
             OutlinedButton(
               onPressed: _prevStep,
-              child: const Text('�É Back'),
+              child: const Text('�É Back'),
             ),
           const Spacer(),
           if (_currentStep < 2)
@@ -843,7 +845,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                 backgroundColor: const Color(0xFFFF6B35),
                 foregroundColor: Colors.white,
               ),
-              child: const Text('Next �Æ'),
+              child: const Text('Next �Æ'),
             ),
         ],
       ),
@@ -1097,7 +1099,7 @@ class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
     final widgetRect = _imgToWidget(imgRect, displayedImg);
     final isSelected = _selectedBox == id;
 
-    // 20px transparent grab margin �ö big hit area without changing visible box
+    // 20px transparent grab margin �ö big hit area without changing visible box
     const double kGrabMargin = 20;
 
     return Positioned(
@@ -1119,7 +1121,7 @@ class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
             ),
           ),
           // Visible box body (centered inside grab ring)
-          // NO GestureDetector here �ö the outer grab ring handles tap/pan for
+          // NO GestureDetector here �ö the outer grab ring handles tap/pan for
           // the whole area. Having an inner GestureDetector consumed the touch
           // before the outer move detector could start a pan gesture.
           Positioned(
@@ -1162,7 +1164,7 @@ class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
               ),
             ),
           ),
-          // Resize handles �ö placed in OUTER Stack so they aren't clipped
+          // Resize handles �ö placed in OUTER Stack so they aren't clipped
           // by the visible box's Container decoration. Use IgnorePointer on
           // the move detector so handle hit-testing wins; handles are drawn
           // last so they appear on top.

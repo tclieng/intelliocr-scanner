@@ -287,6 +287,26 @@ class _HomeScreenState extends State<HomeScreen> {
       if (RegExp(r'^\([\w\u00C0-\u024F]+\)', caseSensitive: false).hasMatch(line)) continue;
       if (line.length < 3) continue;
       if (RegExp(r'^[\d\s\-_.,:()]+$').hasMatch(line)) continue;
+      // Skip lines with sub-branch/location identifiers in parentheses (e.g. "LE CAFE DE FLORA")
+      if (RegExp(r'\([A-Z][A-Z\s]{4,}\)').hasMatch(line)) {
+        print('[SUPPLIER] Skipped branch line: "$line"');
+        continue;
+      }
+      // Skip lines with obvious mixed-case OCR garbage (e.g. "eaTNIAGA")
+      int caseTransitions = 0;
+      for (int i = 1; i < line.length; i++) {
+        final a = line[i - 1];
+        final b = line[i];
+        final aUpper = a.codeUnitAt(0) >= 65 && a.codeUnitAt(0) <= 90;
+        final bUpper = b.codeUnitAt(0) >= 65 && b.codeUnitAt(0) <= 90;
+        final aLower = a.codeUnitAt(0) >= 97 && a.codeUnitAt(0) <= 122;
+        final bLower = b.codeUnitAt(0) >= 97 && b.codeUnitAt(0) <= 122;
+        if ((aUpper && bLower) || (aLower && bUpper)) caseTransitions++;
+      }
+      if (caseTransitions >= 3 && line.length >= 6) {
+        print('[SUPPLIER] Skipped OCR-garbage (mixed case) line: "$line"');
+        continue;
+      }
 
       // Collect all candidate lines for later fuzzy matching against templates
       candidateLines.add(line.trim());
