@@ -643,32 +643,47 @@ class MatchEngine {
     print('[YELLOW] Merged into ${mergedRows.length} rows');
 
     // ── FIX for JMS / invoice-style receipts: split rows that were merged
-    // because of small Y gaps between adjacent items. Detection: if a row has
-    // >= 4 standalone decimals and no price*qty pattern, it likely contains
-    // multiple items stacked. Look for Y-gaps BETWEEN consecutive numeric
-    // blocks that exceed the within-row tolerance — those gaps indicate
-    // a new item.
+    // because of small Y gaps between adjacent items. Strategy:
+    // 1. For each merged row, count how many standalone decimal numbers it
+    //    contains (e.g., qty + price + amount per item).
+    // 2. If a row has >= 6 standalone decimals (>= 2 items), look for Y-gaps
+    //    between blocks. The gap between items is typically larger than the
+    //    gap within an item (e.g., between qty and price in same row).
+    // 3. Use median inter-block Y-distance as the threshold. Any gap > 2x
+    //    median indicates a new item line.
     final splitRows = <List<OcrBlock>>[];
     for (final row in mergedRows) {
-      // Only attempt split if row has many blocks
       if (row.length < 6) {
         splitRows.add(row);
         continue;
       }
-      // Sort by Y to find vertical gaps
+      // Sort by Y
       final sorted = List<OcrBlock>.from(row)..sort((a, b) => a.y.compareTo(b.y));
-      // Compute average block height
+      // Print all blocks for debugging
+      print('[YELLOW] Merged row blocks (${row.length}):');
+      for (int bi = 0; bi < sorted.length; bi++) {
+        final b = sorted[bi];
+        print('  [$bi] "${b.text}" @ x=${b.x.toStringAsFixed(0)} y=${b.y.toStringAsFixed(0)} h=${b.height.toStringAsFixed(0)}');
+      }
+      // Compute inter-block Y gaps (top-to-top distance)
+      final gaps = <double>[];
+      for (int i = 1; i < sorted.length; i++) {
+        gaps.add((sorted[i].y - sorted[i - 1].y).abs());
+      }
+      gaps.sort();
+      // Use median gap
+      final median = gaps[gaps.length ~/ 2];
+      // Use average block height
       final avgH = sorted.fold<double>(0, (s, b) => s + b.height) / sorted.length;
-      // Find Y-gaps: between consecutive blocks, gap > 1.2 * avgH means new item
+      // Threshold: 1.3 * median (within-row spacing) — tighter detection
+      final threshold = (median * 1.3).clamp(3.0, avgH * 0.5);
       final groups = <List<OcrBlock>>[];
       var currentGroup = <OcrBlock>[sorted.first];
       for (int i = 1; i < sorted.length; i++) {
         final prev = sorted[i - 1];
         final curr = sorted[i];
-        // Use BOTTOM of prev to TOP of curr as gap measure
-        final gap = curr.y - (prev.y + prev.height);
-        if (gap > avgH * 0.4) {
-          // New item line
+        final gap = (curr.y - prev.y).abs();
+        if (gap > threshold) {
           if (currentGroup.isNotEmpty) groups.add(currentGroup);
           currentGroup = [curr];
         } else {
@@ -677,13 +692,13 @@ class MatchEngine {
       }
       if (currentGroup.isNotEmpty) groups.add(currentGroup);
       if (groups.length > 1) {
-        // Re-sort each group left-to-right
         for (final g in groups) {
           g.sort((a, b) => a.x.compareTo(b.x));
         }
-        print('[YELLOW] Split merged row of ${row.length} blocks into ${groups.length} items (Y-gap detection)');
+        print('[YELLOW] Split merged row of ${row.length} blocks into ${groups.length} items (gaps=${gaps.map((g) => g.toStringAsFixed(0)).join(',')}, median=${median.toStringAsFixed(1)}, threshold=${threshold.toStringAsFixed(1)})');
         splitRows.addAll(groups);
       } else {
+        print('[YELLOW] No Y-gap split: only 1 group, median=${median.toStringAsFixed(1)} threshold=${threshold.toStringAsFixed(1)}');
         splitRows.add(row);
       }
     }
