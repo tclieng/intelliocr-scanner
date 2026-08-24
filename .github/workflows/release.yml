@@ -46,7 +46,7 @@ jobs:
         run: flutter pub get
 
       - name: Build release APK
-        run: flutter build apk --release
+        run: flutter clean && flutter build apk --release
 
       - name: Upload APK artifact
         if: success()
