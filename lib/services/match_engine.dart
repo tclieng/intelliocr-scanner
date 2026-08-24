@@ -485,6 +485,16 @@ class MatchEngine {
         .replaceAll(RegExp(r'\b\d{8,}\b'), '') // Remove barcodes (8+ consecutive digits)
         .replaceAll(RegExp(r'\s{2,}'), ' ') // Collapse multiple spaces
         .trim();
+    // Remove leading item codes: alphanumeric codes with 1-3 letters followed by
+    // numbers/dashes at the very start of the description. Examples:
+    // "0085S 1.000 UNIT"     -> remove "0085S"
+    // "300-S0002 MYF 1of 1"  -> remove code prefix before product name
+    // "s7LO679159832 FARMFRITES" -> remove hex-like prefix
+    cleaned = cleaned.replaceFirst(
+        RegExp(r'^[A-Za-z]?\d[A-Za-z0-9\-]{0,20}\s*'), '');
+    // Remove leading hex-like codes: mix of letters+numbers with 4+ chars starting with letter
+    cleaned = cleaned.replaceFirst(
+        RegExp(r'^[A-Za-z][A-Za-z0-9\-]{3,20}\s*'), '');
     // If the whole thing is just a number, return empty
     if (RegExp(r'^[\d\s,.]+$').hasMatch(cleaned)) return '';
     return cleaned;
@@ -515,7 +525,14 @@ class MatchEngine {
 
     final mappedYellow = match.mapRoi(cfg.roi);
     final topY = mappedYellow.top;
-    final bottomY = anchorCY != null ? anchorCY : mappedYellow.bottom;
+    // Allow YELLOW box to extend below the GREEN anchor so item rows near the
+    // GREEN box boundary are still captured. Use the maximum of the template
+    // YELLOW bottom and the GREEN anchor position (plus a small margin), so we
+    // never accidentally clip item lines that sit just below the anchor text.
+    final bottomY = mappedYellow.bottom;
+    final effectiveBottom = (anchorCY != null && anchorCY > bottomY)
+        ? anchorCY + 30
+        : bottomY;
     final leftX = mappedYellow.left;
     final rightX = mappedYellow.right;
 
@@ -524,7 +541,7 @@ class MatchEngine {
       final cy = b.centerY;
       final cx = b.centerX;
       return cy >= topY - tol &&
-          cy <= bottomY + tol &&
+          cy <= effectiveBottom + tol &&
           cx >= leftX - tol &&
           cx <= rightX + tol;
     }).toList();
@@ -731,12 +748,20 @@ class MatchEngine {
           // qty (KG count) and 16.70 is the unit price, but the amount (400.80) is outside
           // the box ROI. When the larger value is a whole number 2-100 it is almost
           // certainly the qty column, not the amount. Derive amount = qty * unitPrice.
+          //
+          // GUARD: If amount is a very small number (e.g. 0.90 from OCR splitting "12.90"
+          // into [12., 90]) it is a decimal FRAGMENT, not a valid unit price. Only swap
+          // when amount is large enough to be a plausible real unit price (>= 1.00).
+          // Also guard: only swap when the product of qty*unitPrice would be REASONABLE
+          // (not more than 3x the original amount — a huge product means the swap is wrong).
           if (amount > 0 &&
               unitPrice > 0 &&
               amount < unitPrice &&
               unitPrice >= 2 &&
               unitPrice <= 100 &&
-              unitPrice == unitPrice.roundToDouble()) {
+              unitPrice == unitPrice.roundToDouble() &&
+              amount >= 1.0 &&                        // Guard: decimal fragment (e.g. 0.90)
+              (unitPrice * amount) <= amount * 3.0) {  // Guard: product must be plausible
             // unitPrice is actually the qty; the original amount is the real unit price
             qty = unitPrice.round();
             final realUnitPrice = amount;
