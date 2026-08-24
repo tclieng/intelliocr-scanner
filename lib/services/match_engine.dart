@@ -920,12 +920,34 @@ class MatchEngine {
 
         // Amount row — merge any buffered leading description lines.
         var finalDesc = descText;
-        // Track item row index within this finalRows entry so we can pick the
-        // right description chunk from merged-OCR text.
-        final itemRowIdx = _itemRowCount;
         if (pendingDesc.isNotEmpty) {
           finalDesc = finalDesc.isEmpty ? pendingDesc : '$pendingDesc $finalDesc';
           pendingDesc = '';
+        }
+
+        // UOM extraction — do this BEFORE stripping UOM from descParts.
+        // For JMS: "1.000 UNIT" gets split into ["1.000", "UNIT"] blocks.
+        // Scan ALL row blocks (not just descParts) for UOM tokens so we don't
+        // miss ones stripped by the "qty uom" block handler above.
+        String uom = '';
+        for (final b in row) {
+          final uomRe = RegExp(r'\b(KG|KGM|G|GM|GR|GMS|L|LT|ML|LTR|PCS|PC|EA|EACH|UNIT|SET|PKT|PACKET|BTL|BOTTLE|CAN|BOX|DOZ|DRM|ROLL|SLICE|SQFT|M|CM|MM)\b', caseSensitive: false);
+          final um = uomRe.firstMatch(b.text);
+          if (um != null) {
+            uom = um.group(1)!.toUpperCase();
+            break;
+          }
+        }
+        if (uom.isEmpty) {
+          // Fall back: scan original descParts before UOM stripping
+          for (final token in descParts) {
+            final uomRe = RegExp(r'\b(KG|KGM|G|GM|GR|GMS|L|LT|ML|LTR|PCS|PC|EA|EACH|UNIT|SET|PKT|PACKET|BTL|BOTTLE|CAN|BOX|DOZ|DRM|ROLL|SLICE|SQFT|M|CM|MM)\b', caseSensitive: false);
+            final um = uomRe.firstMatch(token);
+            if (um != null) {
+              uom = um.group(1)!.toUpperCase();
+              break;
+            }
+          }
         }
 
         // Remove UOM tokens from description (they were captured separately above)
@@ -934,31 +956,40 @@ class MatchEngine {
           return !uomRe.hasMatch(p);
         }).toList();
         finalDesc = _cleanItemDescription(cleanedParts.join(' ')).trim();
+
         // If description is missing or clearly non-item, try to recover it from
         // the merged description block. JMS receipts OCR-merge all 3 product names
-        // into one block ("FARMFRITES...KGX6...WESTGOLD..."). Split by product
-        // name boundaries and pick the chunk that matches this row's item index.
+        // into one block ("FARMFRITES...KGX6...WESTGOLD..."). Split by multi-pack
+        // size markers (KGX, KGXS, LKGX) which are the separators between products.
+        // Also handle cases where only some items are in the merged block.
         if (finalDesc.isEmpty || _isNonItemText(finalDesc.toLowerCase())) {
           final mergedText = row.map((b) => b.text).join(' ');
-          final parts = mergedText
-              .split(RegExp(r'\s+(?=[A-Z][A-Z0-9]{2,})\s*'))
-              .map((s) => s.trim())
-              .where((s) => s.length > 5)
-              .toList();
+          // Split by multi-pack size markers — these reliably separate JMS products.
+          // Approach: find each \d?L?KGX position, split at the preceding space.
+          // Lookahead split doesn't work here (can't split before \d?L?KGX since
+          // the space char fails the lookahead char-class), so use index scanning.
+          final parts = <String>[];
+          final pattern = RegExp(r'\d?L?KGX', caseSensitive: false);
+          int prev = 0;
+          for (final m in pattern.allMatches(mergedText)) {
+            final spacePos = mergedText.lastIndexOf(' ', m.start - 1);
+            final splitAt = (spacePos > prev) ? spacePos : m.start;
+            final chunk = mergedText.substring(prev, splitAt).trim();
+            if (chunk.length > 5) parts.add(chunk);
+            prev = splitAt + 1;
+          }
+          final last = mergedText.substring(prev).trim();
+          if (last.length > 5) parts.add(last);
           if (parts.length > 1) {
-            // Pick part by item row index (cyclically), preferring unused parts
-            // first. If all parts used, fall back to cycling.
-            int idx = itemRowIdx % parts.length;
-            if (!_usedPartIndices.isEmpty) {
-              // Try to find an unused index close to the expected position
+            // Pick part by item row index, preferring unused parts first
+            int idx = _itemRowCount % parts.length;
+            if (_usedPartIndices.isNotEmpty) {
               final remaining = <int>[];
               for (int i = 0; i < parts.length; i++) {
                 if (!_usedPartIndices.contains(i)) remaining.add(i);
               }
               if (remaining.isNotEmpty) {
-                // Find remaining index closest to itemRowIdx
-                remaining.sort((a, b) =>
-                    ((a - idx).abs()).compareTo((b - idx).abs()));
+                remaining.sort((a, b) => ((a - idx).abs()).compareTo((b - idx).abs()));
                 idx = remaining.first;
               }
             }
@@ -966,17 +997,15 @@ class MatchEngine {
             final candDesc = _cleanItemDescription(parts[idx]);
             if (candDesc.isNotEmpty && !_isNonItemText(candDesc.toLowerCase())) {
               finalDesc = candDesc;
-              print('[YELLOW] Desc recovered: idx=$idx "$finalDesc"');
+              print('[YELLOW] Desc recovered: idx=$idx parts=${parts.length} "$finalDesc"');
             }
           }
         }
         // Final filter: skip only if no valid description AND no amount
         if (finalDesc.isEmpty && amount <= 0) continue;
 
-        // If amount is 0 but unitPrice > 0 and we have a UOM (qty context),
-        // treat unitPrice as the actual amount (qty=1). This handles JMS rows where
-        // "1.000 UNIT" + "65.000" → decs=[65.0], amount=0, unitPrice=0, qty=0,
-        // resulting in amount=0 being skipped. With this fix: amount=65.0.
+        // If amount is 0 but unitPrice > 0 (JMS "1.000 UNIT" + "65.000" row),
+        // treat unitPrice as the actual amount with qty=1.
         if (amount <= 0 && unitPrice > 0) {
           print('[YELLOW] No amount but unitPrice=$unitPrice > 0 — using unitPrice as amount (qty=1)');
           amount = unitPrice;
@@ -984,18 +1013,6 @@ class MatchEngine {
         }
 
         final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0.0);
-
-        // UOM: already parsed above from "qty uom" blocks (e.g. "1.000 UNIT")
-        // and collected in descParts. Extract it from there.
-        String uom = '';
-        for (final token in descParts) {
-          final uomRe = RegExp(r'\b(KG|KGM|G|GM|GR|GMS|L|LT|ML|LTR|PCS|PC|EA|EACH|UNIT|SET|PKT|PACKET|BTL|BOTTLE|CAN|BOX|DOZ|DRM|ROLL|SLICE|SQFT|M|CM|MM)\b', caseSensitive: false);
-          final um = uomRe.firstMatch(token);
-          if (um != null) {
-            uom = um.group(1)!.toUpperCase();
-            break;
-          }
-        }
 
       print('[YELLOW] Adding item: qty=$qty desc="$finalDesc" uom="$uom" unitPrice=$unitPrice amount=$amt');
       _itemRowCount++;
