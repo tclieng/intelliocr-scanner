@@ -665,25 +665,20 @@ class MatchEngine {
         final b = sorted[bi];
         print('  [$bi] "${b.text}" @ x=${b.x.toStringAsFixed(0)} y=${b.y.toStringAsFixed(0)} h=${b.height.toStringAsFixed(0)}');
       }
-      // Compute inter-block Y gaps (top-to-top distance)
-      final gaps = <double>[];
-      for (int i = 1; i < sorted.length; i++) {
-        gaps.add((sorted[i].y - sorted[i - 1].y).abs());
-      }
-      gaps.sort();
-      // Use median gap
-      final median = gaps[gaps.length ~/ 2];
-      // Use average block height
+      // ── Strategy: find Y-clusters of similar-Y blocks. Each cluster
+      // is a visual row in the original receipt. Use a tight Y tolerance
+      // (block-height based) so adjacent item lines split cleanly.
       final avgH = sorted.fold<double>(0, (s, b) => s + b.height) / sorted.length;
-      // Threshold: 1.3 * median (within-row spacing) — tighter detection
-      final threshold = (median * 1.3).clamp(3.0, avgH * 0.5);
+      // Tight tolerance: ~60% of avg height (most OCR engines return blocks
+      // with consistent Y per visual row).
+      final tolerance = avgH * 0.6;
       final groups = <List<OcrBlock>>[];
       var currentGroup = <OcrBlock>[sorted.first];
       for (int i = 1; i < sorted.length; i++) {
         final prev = sorted[i - 1];
         final curr = sorted[i];
-        final gap = (curr.y - prev.y).abs();
-        if (gap > threshold) {
+        final yDiff = (curr.y - prev.y).abs();
+        if (yDiff > tolerance) {
           if (currentGroup.isNotEmpty) groups.add(currentGroup);
           currentGroup = [curr];
         } else {
@@ -695,15 +690,45 @@ class MatchEngine {
         for (final g in groups) {
           g.sort((a, b) => a.x.compareTo(b.x));
         }
-        print('[YELLOW] Split merged row of ${row.length} blocks into ${groups.length} items (gaps=${gaps.map((g) => g.toStringAsFixed(0)).join(',')}, median=${median.toStringAsFixed(1)}, threshold=${threshold.toStringAsFixed(1)})');
+        print('[YELLOW] Y-cluster split: ${row.length} blocks → ${groups.length} items (tolerance=${tolerance.toStringAsFixed(1)}, avgH=${avgH.toStringAsFixed(1)})');
         splitRows.addAll(groups);
       } else {
-        print('[YELLOW] No Y-gap split: only 1 group, median=${median.toStringAsFixed(1)} threshold=${threshold.toStringAsFixed(1)}');
+        // No Y-cluster split — try fallback: split by decimal count
+        // Count standalone decimal blocks
+        final numRe = RegExp(r'^\d[\d.,]*$');
+        final decCount = row.where((b) => numRe.hasMatch(b.text.trim())).length;
+        if (decCount >= 6) {
+          // Likely multi-item: try a tighter Y threshold (30% avgH)
+          final tightTol = avgH * 0.3;
+          final tightGroups = <List<OcrBlock>>[];
+          var tightCurrent = <OcrBlock>[sorted.first];
+          for (int i = 1; i < sorted.length; i++) {
+            final prev = sorted[i - 1];
+            final curr = sorted[i];
+            final yDiff = (curr.y - prev.y).abs();
+            if (yDiff > tightTol) {
+              if (tightCurrent.isNotEmpty) tightGroups.add(tightCurrent);
+              tightCurrent = [curr];
+            } else {
+              tightCurrent.add(curr);
+            }
+          }
+          if (tightCurrent.isNotEmpty) tightGroups.add(tightCurrent);
+          if (tightGroups.length > 1) {
+            for (final g in tightGroups) {
+              g.sort((a, b) => a.x.compareTo(b.x));
+            }
+            print('[YELLOW] Tight Y-cluster split: ${row.length} blocks → ${tightGroups.length} items (tolerance=${tightTol.toStringAsFixed(1)}, decs=$decCount)');
+            splitRows.addAll(tightGroups);
+            continue;
+          }
+        }
+        print('[YELLOW] No Y split: ${groups.length} group, avgH=${avgH.toStringAsFixed(1)}');
         splitRows.add(row);
       }
     }
     final finalRows = splitRows;
-    print('[YELLOW] After Y-gap split: ${finalRows.length} rows');
+    print('[YELLOW] After Y-cluster split: ${finalRows.length} rows');
 
     // ── Column-independent row extraction ──
     // We no longer rely on a fixed "amount" column (which is fragile when the

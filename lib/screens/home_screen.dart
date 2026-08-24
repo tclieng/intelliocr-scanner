@@ -35,6 +35,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String _status = 'Ready';
   String _processedSupplier = '';
   int _processedCount = 0;
+  ReceiptTemplate? _lastMatchedTemplate;
   int _totalCount = 0;
 
   @override
@@ -102,6 +103,14 @@ class _HomeScreenState extends State<HomeScreen> {
             .replaceAll(RegExp(r'_scaled$'), '');
         final data = await _parseReceiptData(cleanFname, rawText);
 
+        // FALLBACK: If OCR didn't detect a supplier name but a previous receipt
+        // in this batch matched a template, reuse that template. Common when
+        // a receipt's header is faded or partially out of frame.
+        if (data.supplier.isEmpty && _lastMatchedTemplate != null) {
+          print('[TEMPLATE_MATCH] Receipt $i: Empty OCR supplier, reusing last matched template="${_lastMatchedTemplate!.supplierName}"');
+          data.supplier = _lastMatchedTemplate!.supplierName;
+        }
+
         // ── Supplier-name-based template matching ──
         // OCR detects the supplier name from the receipt header, then we find
         // the best-matching template by supplier name (not by anchor text,
@@ -114,6 +123,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
         if (matchedTemplate != null) {
           print('[TEMPLATE_MATCH] Receipt $i: Matched template="${matchedTemplate.supplierName}"');
+          _lastMatchedTemplate = matchedTemplate;
           try {
             final enhanced = await _matchEngine.extractWithTemplate(
               matchedTemplate,
@@ -178,6 +188,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _processedCount = _results.length;
       // Use the first result's supplier (which is the matched template name)
       _processedSupplier = _results.isNotEmpty ? _results.first.supplier : '';
+      _lastMatchedTemplate = null; // reset for next batch
       _status = '${_results.length}/${_captures.length} processed';
     });
   }
