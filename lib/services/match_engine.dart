@@ -973,6 +973,16 @@ class MatchEngine {
         // Final filter: skip only if no valid description AND no amount
         if (finalDesc.isEmpty && amount <= 0) continue;
 
+        // If amount is 0 but unitPrice > 0 and we have a UOM (qty context),
+        // treat unitPrice as the actual amount (qty=1). This handles JMS rows where
+        // "1.000 UNIT" + "65.000" → decs=[65.0], amount=0, unitPrice=0, qty=0,
+        // resulting in amount=0 being skipped. With this fix: amount=65.0.
+        if (amount <= 0 && unitPrice > 0) {
+          print('[YELLOW] No amount but unitPrice=$unitPrice > 0 — using unitPrice as amount (qty=1)');
+          amount = unitPrice;
+          qty = 1;
+        }
+
         final amt = amount > 0 ? amount : (unitPrice > 0 ? unitPrice * qty : 0.0);
 
         // UOM: already parsed above from "qty uom" blocks (e.g. "1.000 UNIT")
@@ -988,6 +998,7 @@ class MatchEngine {
         }
 
       print('[YELLOW] Adding item: qty=$qty desc="$finalDesc" uom="$uom" unitPrice=$unitPrice amount=$amt');
+      _itemRowCount++;
       items.add(ItemRow(
         quantity: qty,
         description: finalDesc,
