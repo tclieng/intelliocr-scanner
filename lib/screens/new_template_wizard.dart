@@ -11,10 +11,9 @@ import '../models/receipt_template.dart';
 import '../models/anchor_point.dart';
 import '../models/field_roi.dart';
 
-/// New Template Wizard — 3 Steps
+/// New Template Wizard ΓÇö 4 Steps
 /// Step 1: Capture Master Receipt
 /// Step 2: Draw 5 Boxes (BLACK, RED, BLUE, YELLOW, GREEN)
-/// Step 3: Save Template
 class NewTemplateWizard extends StatefulWidget {
   const NewTemplateWizard({super.key});
 
@@ -27,7 +26,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
   final ImagePicker _picker = ImagePicker();
 
   // Wizard state
-  int _currentStep = 0; // 0=photo, 1=boxes, 2=save
+  int _currentStep = 0;
   late ReceiptTemplate _template;
   File? _masterImage;
   img.Image? _processedImage;
@@ -53,7 +52,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     _template = ReceiptTemplate(id: id, supplierName: '');
   }
 
-  // ── Navigation ──
+  // ΓöÇΓöÇ Navigation ΓöÇΓöÇ
 
   void _nextStep() {
     if (_currentStep < 2) setState(() => _currentStep++);
@@ -69,10 +68,11 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
       case 1: return _blackBox != Rect.zero && _redBox != Rect.zero &&
                     _blueBox != Rect.zero && _yellowBox != Rect.zero &&
                     _greenBox != Rect.zero;
-      case 2: return _canSave;
+      case 2: return _canSave; // All boxes set, lines defined, name entered
       default: return false;
     }
   }
+
 
   bool get _canSave =>
       _masterImage != null &&
@@ -81,9 +81,10 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
       _blueBox != Rect.zero &&
       _yellowBox != Rect.zero &&
       _greenBox != Rect.zero &&
+      
       _supplierFromBlackBox.trim().isNotEmpty;
 
-  // ── Step 1: Capture Master Receipt ──
+  // ΓöÇΓöÇ Step 1: Capture Master Receipt ΓöÇΓöÇ
 
   Future<void> _captureMaster() async {
     final photo = await _picker.pickImage(
@@ -164,7 +165,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     });
   }
 
-  // ── Step 2: Draw 5 Boxes (BLACK, RED, BLUE, YELLOW, GREEN) ──
+  // ΓöÇΓöÇ Step 2: Draw 5 Boxes (BLACK, RED, BLUE, YELLOW, GREEN) ΓöÇΓöÇ
 
   Future<void> _openFiveBoxEditor() async {
     if (_processedImage == null) return;
@@ -239,6 +240,8 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
         roi: _yellowBox,
         columns: [],
       );
+      
+      // Initialize vertical lines for Step 3
     });
     
     // Perform OCR on BLACK box to get supplier name
@@ -337,7 +340,30 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     );
   }
 
-  // ── Step 3: Save ──
+
+  // ΓöÇΓöÇ Step 3: Define Columns ΓöÇΓöÇ
+
+
+
+      columns.add(YellowBoxColumn(
+        id: 'col_$i',
+        name: name,
+        displayName: displayName,
+        x: left,
+        width: width,
+        order: i,
+      ));
+    }
+
+    _template.yellowBoxConfig = YellowBoxConfig(
+      id: 'yellow_${DateTime.now().millisecondsSinceEpoch}',
+      roi: _yellowBox,
+      columns: columns,
+      detectRowsBySubtotal: true,
+    );
+  }
+
+  // ΓöÇΓöÇ Step 4: Save ΓöÇΓöÇ
 
   void _showSaveDialog() {
     // Use supplier name from BLACK box if available, otherwise empty
@@ -389,6 +415,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
   }
 
   Future<void> _saveTemplate(String supplierName) async {
+    
     _template.supplierName = supplierName;
     _template.updatedAt = DateTime.now();
     
@@ -412,7 +439,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     }
   }
 
-  // ── Build UI ──
+  // ΓöÇΓöÇ Build UI ΓöÇΓöÇ
 
   @override
   Widget build(BuildContext context) {
@@ -560,11 +587,11 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
           const SizedBox(height: 12),
           Text(
             'Create 5 boxes on the receipt image. They must NOT overlap and should be arranged from top to bottom:\n\n'
-            '⬛ BLACK: Supplier Name (MANUAL - type the name, not OCR)\n'
-            '🔴 RED: Invoice Number\n'
-            '🔵 BLUE: Invoice Date\n'
-            '🟡 YELLOW: Purchase Items (ROI Fields)\n'
-            '🟢 GREEN: Grand Total',
+            'Γ¼¢ BLACK: Supplier Name (MANUAL - type the name, not OCR)\n'
+            '≡ƒö┤ RED: Invoice Number\n'
+            '≡ƒö╡ BLUE: Invoice Date\n'
+            '≡ƒƒí YELLOW: Purchase Items (ROI Fields)\n'
+            '≡ƒƒó GREEN: Grand Total',
             style: TextStyle(fontSize: 14, color: Colors.grey[700]),
           ),
           const SizedBox(height: 24),
@@ -733,6 +760,8 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
     );
   }
 
+
+
   Widget _buildSaveStep() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(20),
@@ -757,11 +786,11 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                   ),
                   const Divider(),
                   const SizedBox(height: 8),
-                  _buildSummaryRow('⬛ BLACK Box (Supplier)', _blackBox != Rect.zero ? '✓ Set' : '✗ Not set'),
-                  _buildSummaryRow('🔴 RED Box (Invoice #)', _redBox != Rect.zero ? '✓ Set' : '✗ Not set'),
-                  _buildSummaryRow('🔵 BLUE Box (Date)', _blueBox != Rect.zero ? '✓ Set' : '✗ Not set'),
-                  _buildSummaryRow('🟡 YELLOW Box (Items)', _yellowBox != Rect.zero ? '✓ Set' : '✗ Not set'),
-                  _buildSummaryRow('🟢 GREEN Box (Total)', _greenBox != Rect.zero ? '✓ Set' : '✗ Not set'),
+                  _buildSummaryRow('BLACK Box (Supplier)', _blackBox != Rect.zero ? 'SET' : 'NOT SET'),
+                  _buildSummaryRow('RED Box (Invoice #)', _redBox != Rect.zero ? 'SET' : 'NOT SET'),
+                  _buildSummaryRow('BLUE Box (Date)', _blueBox != Rect.zero ? 'SET' : 'NOT SET'),
+                  _buildSummaryRow('YELLOW Box (Items)', _yellowBox != Rect.zero ? 'SET' : 'NOT SET'),
+                  _buildSummaryRow('GREEN Box (Total)', _greenBox != Rect.zero ? 'SET' : 'NOT SET'),
                 ],
               ),
             ),
@@ -786,7 +815,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
-                '⚠ Complete all steps: capture image, draw 5 boxes, confirm supplier name',
+                'WARNING: Complete all steps: capture image, draw 5 boxes, confirm supplier name',
                 style: TextStyle(fontSize: 12, color: Colors.orange[800]),
                 textAlign: TextAlign.center,
               ),
@@ -827,7 +856,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
           if (_currentStep > 0)
             OutlinedButton(
               onPressed: _prevStep,
-              child: const Text('← Back'),
+              child: const Text('ΓåÉ Back'),
             ),
           const Spacer(),
           if (_currentStep < 2)
@@ -837,7 +866,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
                 backgroundColor: const Color(0xFFFF6B35),
                 foregroundColor: Colors.white,
               ),
-              child: const Text('Next →'),
+              child: const Text('Next ΓåÆ'),
             ),
         ],
       ),
@@ -845,7 +874,7 @@ class _NewTemplateWizardState extends State<NewTemplateWizard> {
   }
 }
 
-// ── Helper Classes ──
+// ΓöÇΓöÇ Helper Classes ΓöÇΓöÇ
 
 class _FiveBoxResult {
   final Rect black;   // Supplier Name position (OCR will read from here)
@@ -862,4 +891,494 @@ class _FiveBoxResult {
     required this.green,
   });
 }
+
+// ΓöÇΓöÇ Five Box Editor Screen ΓöÇΓöÇ
+
+class _FiveBoxEditorScreen extends StatefulWidget {
+  final img.Image image;
+  final Rect initialBlack;
+  final Rect initialRed;
+  final Rect initialBlue;
+  final Rect initialYellow;
+  final Rect initialGreen;
+
+  const _FiveBoxEditorScreen({
+    required this.image,
+    required this.initialBlack,
+    required this.initialRed,
+    required this.initialBlue,
+    required this.initialYellow,
+    required this.initialGreen,
+  });
+
+  @override
+  State<_FiveBoxEditorScreen> createState() => _FiveBoxEditorScreenState();
+}
+
+class _FiveBoxEditorScreenState extends State<_FiveBoxEditorScreen> {
+  late Rect _black;   // Supplier Name (OCR)
+  late Rect _red;     // Invoice Number
+  late Rect _blue;    // Invoice Date
+  late Rect _yellow;  // Items
+  late Rect _green;   // Grand Total
+  String? _selectedBox;
+  final _invoiceController = TextEditingController();  // For RED box
+  late final Uint8List _cachedJpg; // encoded once, reused every frame
+
+  @override
+  void initState() {
+    super.initState();
+    _black = widget.initialBlack;
+    _red = widget.initialRed;
+    _blue = widget.initialBlue;
+    _yellow = widget.initialYellow;
+    _green = widget.initialGreen;
+    _cachedJpg = img.encodeJpg(widget.image, quality: 85);
+  }
+
+  @override
+  void dispose() {
+    _invoiceController.dispose();
+    super.dispose();
+  }
+
+  // Helper: get the actual displayed image rect given a Stack's box constraints
+  // Returns the rect (in widget coords) where the image is drawn (with BoxFit.contain)
+  Rect _getDisplayedImageRect(double maxW, double maxH) {
+    final imgW = widget.image.width.toDouble();
+    final imgH = widget.image.height.toDouble();
+    if (imgW == 0 || imgH == 0) return Rect.fromLTWH(0, 0, maxW, maxH);
+
+    final scaleW = maxW / imgW;
+    final scaleH = maxH / imgH;
+    final scale = scaleW < scaleH ? scaleW : scaleH;
+
+    final displayedW = imgW * scale;
+    final displayedH = imgH * scale;
+    final offsetX = (maxW - displayedW) / 2;
+    final offsetY = (maxH - displayedH) / 2;
+
+    return Rect.fromLTWH(offsetX, offsetY, displayedW, displayedH);
+  }
+
+  // Convert image pixel coords to widget coords using displayed image rect
+  Rect _imgToWidget(Rect imgRect, Rect displayedImgRect) {
+    final imgW = widget.image.width.toDouble();
+    final imgH = widget.image.height.toDouble();
+    if (imgW == 0 || imgH == 0) return displayedImgRect;
+
+    final scaleX = displayedImgRect.width / imgW;
+    final scaleY = displayedImgRect.height / imgH;
+
+    return Rect.fromLTWH(
+      displayedImgRect.left + imgRect.left * scaleX,
+      displayedImgRect.top + imgRect.top * scaleY,
+      imgRect.width * scaleX,
+      imgRect.height * scaleY,
+    );
+  }
+
+  // Convert widget coords to image pixel coords
+  Rect _widgetToImg(Rect widgetRect, Rect displayedImgRect) {
+    final imgW = widget.image.width.toDouble();
+    final imgH = widget.image.height.toDouble();
+    if (imgW == 0 || imgH == 0) return widgetRect;
+
+    final scaleX = imgW / displayedImgRect.width;
+    final scaleY = imgH / displayedImgRect.height;
+
+    return Rect.fromLTWH(
+      (widgetRect.left - displayedImgRect.left) * scaleX,
+      (widgetRect.top - displayedImgRect.top) * scaleY,
+      widgetRect.width * scaleX,
+      widgetRect.height * scaleY,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Draw 4 Boxes'),
+        backgroundColor: const Color(0xFFFF6B35),
+        foregroundColor: Colors.white,
+        actions: [
+          TextButton(
+            onPressed: _save,
+            child: const Text('Done', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          // Editor (instructions removed to maximize image area for box positioning)
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final displayedImg = _getDisplayedImageRect(
+                  constraints.maxWidth,
+                  constraints.maxHeight,
+                );
+                return GestureDetector(
+                  onTapDown: (details) => _onTapDown(details.localPosition, displayedImg),
+                  child: Stack(
+                    children: [
+                      // Background fill (for tap-outside detection)
+                      Positioned.fill(
+                        child: Container(color: Colors.black),
+                      ),
+                      // Image (clipped to displayed rect)
+                      Positioned(
+                        left: displayedImg.left,
+                        top: displayedImg.top,
+                        width: displayedImg.width,
+                        height: displayedImg.height,
+                        child: Image.memory(
+                          _cachedJpg,
+                          fit: BoxFit.fill,
+                          gaplessPlayback: true,
+                        ),
+                      ),
+                      // 5 Boxes: BLACK (Supplier), RED (Invoice#), BLUE (Date), YELLOW (Items), GREEN (Total)
+                      _buildBox('black', _black, displayedImg, Colors.black),
+                      _buildBox('red', _red, displayedImg, Colors.red),
+                      _buildBox('blue', _blue, displayedImg, Colors.blue),
+                      _buildBox('yellow', _yellow, displayedImg, Colors.yellow[700]!),
+                      _buildBox('green', _green, displayedImg, Colors.green),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ),
+
+          // BLACK box info (OCR will read supplier name from this box)
+          if (_selectedBox == 'black')
+            Container(
+              padding: const EdgeInsets.all(12),
+              color: Colors.white,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Γ¼¢ BLACK Box - Supplier Name',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Position this box over the company name on the receipt. OCR will read the text inside this box when you tap "Done".',
+                    style: TextStyle(color: Colors.grey[700], fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.grey[300]!),
+                    ),
+                    child: const Row(
+                      children: [
+                        Icon(Icons.info_outline, size: 16, color: Colors.blue),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Make sure the company name is clearly visible inside the BLACK box',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // RED box text input (Invoice Number pattern)
+          if (_selectedBox == 'red')
+            Container(
+              padding: const EdgeInsets.all(12),
+              color: Colors.white,
+              child: TextField(
+                controller: _invoiceController,
+                decoration: const InputDecoration(
+                  labelText: 'Invoice Number (optional pattern)',
+                  hintText: 'e.g. INV-2024-001',
+                  border: OutlineInputBorder(),
+                  helperText: 'Optional: helps OCR identify invoice numbers',
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBox(String id, Rect imgRect, Rect displayedImg, Color color) {
+    if (imgRect == Rect.zero) return const SizedBox();
+
+    final widgetRect = _imgToWidget(imgRect, displayedImg);
+    final isSelected = _selectedBox == id;
+
+    // 20px transparent grab margin ΓÇö big hit area without changing visible box
+    const double kGrabMargin = 20;
+
+    return Positioned(
+      left: widgetRect.left - kGrabMargin,
+      top: widgetRect.top - kGrabMargin,
+      width: widgetRect.width + kGrabMargin * 2,
+      height: widgetRect.height + kGrabMargin * 2,
+      child: Stack(
+        clipBehavior: Clip.none, // IMPORTANT: lets handles extend outside the box
+        children: [
+          // Move + select hit area (entire grab ring)
+          // Use translucent so handles (drawn later in Stack) win the hit-test
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque, // opaque so it absorbs body touches
+              onTap: () { print('[TAP] $id'); _selectBox(id); },
+              onPanStart: (_) { print('[PAN_START] $id'); _selectBox(id); },
+              onPanUpdate: (details) { print('[PAN_UPDATE] $id delta=${details.delta}'); _moveBox(id, details.delta, displayedImg); },
+            ),
+          ),
+          // Visible box body (centered inside grab ring)
+          // NO GestureDetector here ΓÇö the outer grab ring handles tap/pan for
+          // the whole area. Having an inner GestureDetector consumed the touch
+          // before the outer move detector could start a pan gesture.
+          Positioned(
+            left: kGrabMargin,
+            top: kGrabMargin,
+            width: widgetRect.width,
+            height: widgetRect.height,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: isSelected ? color : color.withOpacity(0.7),
+                  width: isSelected ? 3 : 2,
+                ),
+                color: color.withOpacity(isSelected ? 0.20 : 0.15),
+              ),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  // Label
+                  Positioned(
+                    left: 4,
+                    top: 2,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        id.toUpperCase(),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          // Resize handles ΓÇö placed in OUTER Stack so they aren't clipped
+          // by the visible box's Container decoration. Use IgnorePointer on
+          // the move detector so handle hit-testing wins; handles are drawn
+          // last so they appear on top.
+          // Offset (kGrabMargin - 28, kGrabMargin - 28) = (-8, -8) places
+          // the handle's 56├ù56 box so its center sits exactly on the corner.
+          Positioned(
+            left: -8,
+            top: -8,
+            child: _buildHandle(color, 'tl', id, displayedImg),
+          ),
+          Positioned(
+            right: -8,
+            top: -8,
+            child: _buildHandle(color, 'tr', id, displayedImg),
+          ),
+          Positioned(
+            left: -8,
+            bottom: -8,
+            child: _buildHandle(color, 'bl', id, displayedImg),
+          ),
+          Positioned(
+            right: -8,
+            bottom: -8,
+            child: _buildHandle(color, 'br', id, displayedImg),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildHandle(Color color, String corner, String boxId, Rect displayedImg) {
+    // Outer 56x56 transparent hit area for easy grabbing, inner 36x36 visible circle
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onPanStart: (_) { print('[RESIZE_START] $boxId corner=$corner'); _selectBox(boxId); },
+      onPanUpdate: (details) { print('[RESIZE_UPDATE] $boxId corner=$corner delta=${details.delta}'); _resizeBox(boxId, corner, details.delta, displayedImg); },
+      child: Container(
+        width: 56,
+        height: 56,
+        color: Colors.transparent,
+        child: Center(
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: color,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2.5),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.45),
+                  blurRadius: 4,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Icon(
+              corner == 'tl' ? Icons.north_west
+                  : corner == 'tr' ? Icons.north_east
+                  : corner == 'bl' ? Icons.south_west
+                  : Icons.south_east,
+              color: Colors.white,
+              size: 18,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _onTapDown(Offset position, Rect displayedImg) {
+    // Check which box was tapped (in widget coords) - priority: black > red > blue > yellow > green
+    if (_containsPointWidget(_black, position, displayedImg)) {
+      _selectBox('black');
+    } else if (_containsPointWidget(_red, position, displayedImg)) {
+      _selectBox('red');
+    } else if (_containsPointWidget(_blue, position, displayedImg)) {
+      _selectBox('blue');
+    } else if (_containsPointWidget(_yellow, position, displayedImg)) {
+      _selectBox('yellow');
+    } else if (_containsPointWidget(_green, position, displayedImg)) {
+      _selectBox('green');
+    } else {
+      setState(() => _selectedBox = null);
+    }
+  }
+
+  bool _containsPointWidget(Rect imgRect, Offset point, Rect displayedImg) {
+    if (imgRect == Rect.zero) return false;
+    final w = _imgToWidget(imgRect, displayedImg);
+    return point.dx >= w.left &&
+        point.dx <= w.right &&
+        point.dy >= w.top &&
+        point.dy <= w.bottom;
+  }
+
+  void _selectBox(String id) {
+    setState(() => _selectedBox = id);
+  }
+
+  void _moveBox(String id, Offset delta, Rect displayedImg) {
+    setState(() {
+      switch (id) {
+        case 'black':
+          _black = _shiftImgRect(_black, delta, displayedImg);
+          break;
+        case 'red':
+          _red = _shiftImgRect(_red, delta, displayedImg);
+          break;
+        case 'blue':
+          _blue = _shiftImgRect(_blue, delta, displayedImg);
+          break;
+        case 'yellow':
+          _yellow = _shiftImgRect(_yellow, delta, displayedImg);
+          break;
+        case 'green':
+          _green = _shiftImgRect(_green, delta, displayedImg);
+          break;
+      }
+    });
+  }
+
+  void _resizeBox(String id, String corner, Offset delta, Rect displayedImg) {
+    setState(() {
+      final scaleX = widget.image.width / displayedImg.width;
+      final scaleY = widget.image.height / displayedImg.height;
+      final dx = delta.dx * scaleX;
+      final dy = delta.dy * scaleY;
+      Rect current;
+      switch (id) {
+        case 'black': current = _black; break;
+        case 'red': current = _red; break;
+        case 'blue': current = _blue; break;
+        case 'yellow': current = _yellow; break;
+        case 'green': current = _green; break;
+        default: return;
+      }
+
+      double newLeft = current.left;
+      double newTop = current.top;
+      double newRight = current.right;
+      double newBottom = current.bottom;
+
+      if (corner.contains('l')) {
+        newLeft = (newLeft + dx).clamp(0.0, current.right - 30);
+      }
+      if (corner.contains('r')) {
+        newRight = (newRight + dx).clamp(current.left + 30, widget.image.width.toDouble());
+      }
+      if (corner.contains('t')) {
+        newTop = (newTop + dy).clamp(0.0, current.bottom - 20);
+      }
+      if (corner.contains('b')) {
+        newBottom = (newBottom + dy).clamp(current.top + 20, widget.image.height.toDouble());
+      }
+
+      final updated = Rect.fromLTRB(newLeft, newTop, newRight, newBottom);
+
+      switch (id) {
+        case 'red': _red = updated; break;
+        case 'blue': _blue = updated; break;
+        case 'yellow': _yellow = updated; break;
+        case 'green': _green = updated; break;
+      }
+    });
+  }
+
+  Rect _shiftImgRect(Rect rect, Offset delta, Rect displayedImg) {
+    final scaleX = widget.image.width / displayedImg.width;
+    final scaleY = widget.image.height / displayedImg.height;
+    final imgDx = delta.dx * scaleX;
+    final imgDy = delta.dy * scaleY;
+    final imgW = widget.image.width.toDouble();
+    final imgH = widget.image.height.toDouble();
+
+    final newLeft = (rect.left + imgDx).clamp(0.0, imgW - 30);
+    final newTop = (rect.top + imgDy).clamp(0.0, imgH - 20);
+    final newRight = newLeft + rect.width;
+    final newBottom = newTop + rect.height;
+
+    return Rect.fromLTRB(newLeft, newTop, newRight, newBottom);
+  }
+
+  void _save() {
+    Navigator.of(context).pop(_FiveBoxResult(
+      black: _black,
+      red: _red,
+      blue: _blue,
+      yellow: _yellow,
+      green: _green,
+    ));
+  }
+}
+
+// ΓöÇΓöÇ Column Editor Screen ΓöÇΓöÇ
 
